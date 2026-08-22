@@ -1,5 +1,9 @@
-/* シンプルなオフラインキャッシュ用 Service Worker */
-const CACHE_NAME = "daily-stock-cache-v1";
+/* シンプルなオフラインキャッシュ用 Service Worker
+   ※ CORE_ASSETSは「ネットワーク優先」で取得します。
+      オンラインなら常に最新のファイルを表示し、オフライン時のみキャッシュを使います。
+      これにより、index.html/app.js/styles.cssなどを更新してデプロイし直せば、
+      次にページを開いたときに自動的に新しい内容が反映されます。 */
+const CACHE_NAME = "daily-stock-cache-v2";
 const CORE_ASSETS = [
   "./",
   "./index.html",
@@ -31,17 +35,17 @@ self.addEventListener("fetch", (event) => {
 
   // Firebase / 外部APIへのリクエストはキャッシュせずそのまま通す
   if (url.origin !== self.location.origin) return;
+  if (event.request.method !== "GET") return;
 
+  // ネットワーク優先：オンラインなら常に最新を取りに行き、キャッシュも更新する。
+  // オフラインでネットワークが失敗したときだけ、保存しておいたキャッシュを返す。
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          return response;
-        })
-        .catch(() => cached);
-    })
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
