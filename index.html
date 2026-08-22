@@ -155,11 +155,11 @@
 
         <label class="field">
           <span>商品画像のURL（任意）</span>
-          <input type="url" id="itemImageUrl" class="input" placeholder="https://... （商品画像やページのURLを貼り付け）">
-          <div class="hint">一覧でサムネイルとして表示され、クリックするとこのURLを開きます。画像を右クリック→「画像アドレスをコピー」などで取得できます。</div>
+          <input type="url" id="itemImageUrl" class="input" placeholder="https://example.com/image.jpg">
+          <div class="hint">「画像そのもの」のURLを貼ってください（商品ページのURLだと画像は出ません）。商品の写真の上で右クリック→「画像アドレスをコピー」で取得できます。一覧でサムネイル表示され、クリックするとこのURLを開きます。</div>
           <div class="image-preview" id="imagePreviewWrap" hidden>
             <img id="imagePreviewImg" alt="プレビュー">
-            <span id="imagePreviewFallback">画像を読み込めませんでした</span>
+            <span id="imagePreviewFallback">この画像は読み込めませんでした。<br>ページのURLではなく「画像そのもの」のURLか確認してください。</span>
           </div>
         </label>
 

@@ -220,9 +220,10 @@ function itemThumbHtml(item) {
     return `<span class="item-thumb-wrap item-thumb-empty" title="画像URL未登録"><span class="item-thumb-fallback">${fallbackEmoji}</span></span>`;
   }
   return `
-    <a class="item-thumb-wrap" href="${url}" target="_blank" rel="noopener noreferrer" title="商品ページを開く" onclick="event.stopPropagation()">
+    <a class="item-thumb-wrap" href="${url}" target="_blank" rel="noopener noreferrer" title="クリックでこのURLを開く" onclick="event.stopPropagation()">
       <span class="item-thumb-fallback">${fallbackEmoji}</span>
       <img class="item-thumb-img" src="${url}" alt="" loading="lazy" onerror="this.style.display='none'">
+      <span class="item-thumb-link-badge">↗</span>
     </a>`;
 }
 

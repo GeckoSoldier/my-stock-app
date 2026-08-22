@@ -185,9 +185,9 @@ html, body {
 .item-thumb-wrap {
   position: relative;
   flex: none;
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
+  width: 68px;
+  height: 68px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--surface-alt);
   border: 1px solid var(--border);
@@ -198,8 +198,16 @@ html, body {
   cursor: pointer;
 }
 
+.item-thumb-wrap:hover {
+  border-color: var(--primary);
+}
+
 .item-thumb-wrap.item-thumb-empty {
   cursor: default;
+}
+
+.item-thumb-wrap.item-thumb-empty:hover {
+  border-color: var(--border);
 }
 
 .item-thumb-fallback {
@@ -208,7 +216,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.3rem;
+  font-size: 1.8rem;
 }
 
 .item-thumb-img {
@@ -219,6 +227,21 @@ html, body {
   object-fit: cover;
   background: var(--surface);
   z-index: 1;
+}
+
+.item-thumb-link-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 0.6rem;
+  line-height: 16px;
+  text-align: center;
+  z-index: 2;
 }
 
 .item-name { font-weight: 700; font-size: 1rem; word-break: break-word; }
@@ -427,6 +450,10 @@ html, body {
   border: 1px dashed var(--border);
   background: var(--surface-alt);
   overflow: hidden;
+}
+
+.image-preview[hidden] {
+  display: none;
 }
 .image-preview img {
   max-width: 100%;
