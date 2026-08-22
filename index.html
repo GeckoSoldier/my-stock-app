@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>日用品ストック管理</title>
+<meta name="description" content="日常の消耗品の買い物リストと購入サイクルを管理するアプリ">
+<meta name="theme-color" content="#2f6f5e">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Header -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1 class="brand">
+        <span class="brand-mark">🧺</span>
+        <span>日用品ストック管理</span>
+      </h1>
+      <div class="sync-status" id="syncStatus" title="同期状態">
+        <span class="dot" id="syncDot"></span>
+        <span id="syncLabel">未接続</span>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="today">今買うもの</button>
+      <button class="tab" data-tab="all">すべての商品</button>
+      <button class="tab" data-tab="settings">設定</button>
+    </nav>
+  </header>
+
+  <main class="content">
+
+    <!-- TODAY VIEW -->
+    <section class="panel" id="panel-today">
+      <div class="panel-head">
+        <h2>今買うもの</h2>
+        <p class="hint">サイクルが近い・残量が少ないものをまとめて表示します。</p>
+      </div>
+      <div id="todayList" class="item-list"></div>
+      <div id="todayEmpty" class="empty-state" hidden>
+        <p>今すぐ買うものはありません 🎉</p>
+      </div>
+    </section>
+
+    <!-- ALL ITEMS VIEW -->
+    <section class="panel" id="panel-all" hidden>
+      <div class="panel-head panel-head-row">
+        <div>
+          <h2>すべての商品</h2>
+          <p class="hint">登録済みの消耗品の一覧です。</p>
+        </div>
+        <button class="btn btn-primary" id="btnAddItem">＋ 商品を追加</button>
+      </div>
+      <div class="filter-row">
+        <input type="text" id="searchBox" placeholder="商品名で検索" class="input">
+        <select id="categoryFilter" class="input select"></select>
+      </div>
+      <div id="allList" class="item-list"></div>
+      <div id="allEmpty" class="empty-state" hidden>
+        <p>まだ商品が登録されていません。「＋ 商品を追加」から始めましょう。</p>
+      </div>
+    </section>
+
+    <!-- SETTINGS VIEW -->
+    <section class="panel" id="panel-settings" hidden>
+      <div class="panel-head">
+        <h2>設定</h2>
+        <p class="hint">スマホとPCでデータを共有するための同期設定です。</p>
+      </div>
+
+      <div class="card settings-card">
+        <h3>1. 同期方法</h3>
+        <div class="radio-row">
+          <label class="radio-option">
+            <input type="radio" name="syncMode" value="local" id="modeLocal">
+            <span>この端末のみ（同期しない）</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="syncMode" value="cloud" id="modeCloud">
+            <span>クラウド同期する（スマホ・PC共有）</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="card settings-card" id="cloudSettings" hidden>
+        <h3>2. Firebase 接続情報</h3>
+        <p class="hint">無料のFirebaseプロジェクトを作成し、Firebase設定(JSON)を貼り付けてください。手順は同梱の「セットアップ手順書」をご覧ください。</p>
+        <textarea id="firebaseConfig" class="input textarea" rows="6" placeholder='{"apiKey":"...", "authDomain":"...", "projectId":"...", ...}'></textarea>
+
+        <h3>3. 共有コード（家族・世帯コード）</h3>
+        <p class="hint">同じコードを入力した端末同士でデータが共有されます。長めのランダムな文字列を推奨します。</p>
+        <div class="row-inline">
+          <input type="text" id="syncCode" class="input" placeholder="例: yamada-family-8k2x">
+          <button class="btn btn-secondary" id="btnGenCode">コード生成</button>
+        </div>
+
+        <div class="row-inline" style="margin-top:16px;">
+          <button class="btn btn-primary" id="btnConnect">保存して接続</button>
+          <span id="connectResult" class="hint"></span>
+        </div>
+      </div>
+
+      <div class="card settings-card">
+        <h3>カテゴリ管理</h3>
+        <p class="hint">商品の分類に使うカテゴリです。自由に追加・削除できます。</p>
+        <div class="row-inline">
+          <input type="text" id="newCategory" class="input" placeholder="新しいカテゴリ名">
+          <button class="btn btn-secondary" id="btnAddCategory">追加</button>
+        </div>
+        <div id="categoryChips" class="chip-list"></div>
+      </div>
+
+      <div class="card settings-card">
+        <h3>まもなくの判定基準</h3>
+        <div class="row-inline">
+          <label for="warnDays">残り</label>
+          <input type="number" id="warnDays" class="input" style="width:80px" min="0" max="30" value="3">
+          <label for="warnDays">日以内を「まもなく」として表示</label>
+        </div>
+      </div>
+
+      <div class="card settings-card danger-card">
+        <h3>データ管理</h3>
+        <div class="row-inline">
+          <button class="btn btn-secondary" id="btnExport">データをエクスポート</button>
+          <button class="btn btn-secondary" id="btnImport">インポート</button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ADD/EDIT ITEM MODAL -->
+  <div class="modal-overlay" id="itemModalOverlay" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modalTitle">商品を追加</h3>
+        <button class="icon-btn" id="btnCloseModal">✕</button>
+      </div>
+      <form id="itemForm" class="modal-body">
+        <input type="hidden" id="itemId">
+
+        <label class="field">
+          <span>商品名 <span class="required">*</span></span>
+          <input type="text" id="itemName" class="input" required placeholder="例：トイレットペーパー">
+        </label>
+
+        <label class="field">
+          <span>カテゴリ</span>
+          <select id="itemCategory" class="input select"></select>
+        </label>
+
+        <label class="field">
+          <span>購入サイクル（日数） <span class="required">*</span></span>
+          <input type="number" id="itemCycle" class="input" min="1" required placeholder="例：30">
+        </label>
+
+        <label class="field">
+          <span>前回購入日</span>
+          <input type="date" id="itemLastPurchased" class="input">
+        </label>
+
+        <label class="field">
+          <span>現在の残量</span>
+          <div class="stock-radio">
+            <label><input type="radio" name="stockLevel" value="full" checked><span>十分</span></label>
+            <label><input type="radio" name="stockLevel" value="low"><span>少ない</span></label>
+            <label><input type="radio" name="stockLevel" value="none"><span>なし</span></label>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>メモ</span>
+          <input type="text" id="itemMemo" class="input" placeholder="銘柄やサイズなど（任意）">
+        </label>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-danger" id="btnDeleteItem" hidden>削除</button>
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-secondary" id="btnCancelItem">キャンセル</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="toast" hidden></div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

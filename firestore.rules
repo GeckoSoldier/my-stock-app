@@ -1,0 +1,11 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 「共有コード(households/{code})」を知っている人だけがそのデータを読み書きできます。
+    // 匿名ログイン済みであることのみを条件にしたシンプルなルールです。
+    // 共有コードは第三者に推測されにくい、ある程度長いランダムな文字列にしてください。
+    match /households/{code}/items/{itemId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
