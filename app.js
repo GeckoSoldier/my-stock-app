@@ -213,6 +213,19 @@ function statusLabel(status, daysLeft) {
 
 /* ---------------------------- Rendering ----------------------------------- */
 
+function itemThumbHtml(item) {
+  const url = item.imageUrl ? escapeHtml(item.imageUrl) : "";
+  const fallbackEmoji = "🧺";
+  if (!url) {
+    return `<span class="item-thumb-wrap item-thumb-empty" title="画像URL未登録"><span class="item-thumb-fallback">${fallbackEmoji}</span></span>`;
+  }
+  return `
+    <a class="item-thumb-wrap" href="${url}" target="_blank" rel="noopener noreferrer" title="商品ページを開く" onclick="event.stopPropagation()">
+      <span class="item-thumb-fallback">${fallbackEmoji}</span>
+      <img class="item-thumb-img" src="${url}" alt="" loading="lazy" onerror="this.style.display='none'">
+    </a>`;
+}
+
 function itemCardHtml(item) {
   const { daysLeft, status } = computeStatus(item);
   const stockLabel = { full: "十分", low: "少ない", none: "なし" }[item.stockLevel] || "十分";
@@ -222,7 +235,8 @@ function itemCardHtml(item) {
   return `
   <div class="item-card ${cardClass}" data-id="${item.id}">
     <div class="item-card-top">
-      <div>
+      ${itemThumbHtml(item)}
+      <div class="item-title-wrap">
         <div class="item-name">${escapeHtml(item.name)}</div>
         ${item.category ? `<span class="item-category">${escapeHtml(item.category)}</span>` : ""}
       </div>
@@ -343,12 +357,26 @@ function switchTab(tab) {
 
 /* ---------------------------- Modal ----------------------------------------- */
 
+function updateImagePreview() {
+  const url = document.getElementById("itemImageUrl").value.trim();
+  const wrap = document.getElementById("imagePreviewWrap");
+  const img = document.getElementById("imagePreviewImg");
+  const fallback = document.getElementById("imagePreviewFallback");
+  if (!url) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  fallback.hidden = true;
+  img.hidden = false;
+  img.onerror = () => { img.hidden = true; fallback.hidden = false; };
+  img.src = url;
+}
+
 function openAddModal() {
   document.getElementById("modalTitle").textContent = "商品を追加";
   document.getElementById("itemForm").reset();
   document.getElementById("itemId").value = "";
   document.getElementById("itemLastPurchased").value = todayStr();
   document.getElementById("btnDeleteItem").hidden = true;
+  document.getElementById("imagePreviewWrap").hidden = true;
   renderCategorySelects();
   document.getElementById("itemModalOverlay").hidden = false;
 }
@@ -359,6 +387,7 @@ function openEditModal(id) {
   document.getElementById("modalTitle").textContent = "商品を編集";
   document.getElementById("itemId").value = item.id;
   document.getElementById("itemName").value = item.name || "";
+  document.getElementById("itemImageUrl").value = item.imageUrl || "";
   renderCategorySelects();
   document.getElementById("itemCategory").value = item.category || state.settings.categories[0];
   document.getElementById("itemCycle").value = item.cycleDays || "";
@@ -367,6 +396,7 @@ function openEditModal(id) {
   const radios = document.querySelectorAll('input[name="stockLevel"]');
   radios.forEach((r) => { r.checked = r.value === (item.stockLevel || "full"); });
   document.getElementById("btnDeleteItem").hidden = false;
+  updateImagePreview();
   document.getElementById("itemModalOverlay").hidden = false;
 }
 
@@ -383,6 +413,7 @@ async function handleItemFormSubmit(e) {
   const item = {
     id,
     name: document.getElementById("itemName").value.trim(),
+    imageUrl: document.getElementById("itemImageUrl").value.trim(),
     category: document.getElementById("itemCategory").value,
     cycleDays: Number(document.getElementById("itemCycle").value) || 30,
     lastPurchased: document.getElementById("itemLastPurchased").value || null,
@@ -534,6 +565,7 @@ function initGeneralUI() {
   });
   document.getElementById("itemForm").addEventListener("submit", handleItemFormSubmit);
   document.getElementById("btnDeleteItem").addEventListener("click", handleDeleteItem);
+  document.getElementById("itemImageUrl").addEventListener("input", updateImagePreview);
 
   document.getElementById("searchBox").addEventListener("input", render);
   document.getElementById("categoryFilter").addEventListener("change", render);

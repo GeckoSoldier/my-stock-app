@@ -154,6 +154,16 @@
         </label>
 
         <label class="field">
+          <span>商品画像のURL（任意）</span>
+          <input type="url" id="itemImageUrl" class="input" placeholder="https://... （商品画像やページのURLを貼り付け）">
+          <div class="hint">一覧でサムネイルとして表示され、クリックするとこのURLを開きます。画像を右クリック→「画像アドレスをコピー」などで取得できます。</div>
+          <div class="image-preview" id="imagePreviewWrap" hidden>
+            <img id="imagePreviewImg" alt="プレビュー">
+            <span id="imagePreviewFallback">画像を読み込めませんでした</span>
+          </div>
+        </label>
+
+        <label class="field">
           <span>カテゴリ</span>
           <select id="itemCategory" class="input select"></select>
         </label>

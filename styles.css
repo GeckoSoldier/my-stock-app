@@ -174,11 +174,54 @@ html, body {
 .item-card-top {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
-.item-name { font-weight: 700; font-size: 1rem; }
+.item-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-thumb-wrap {
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.item-thumb-wrap.item-thumb-empty {
+  cursor: default;
+}
+
+.item-thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+}
+
+.item-thumb-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.item-name { font-weight: 700; font-size: 1rem; word-break: break-word; }
 .item-category {
   display: inline-block;
   font-size: 0.72rem;
@@ -195,6 +238,8 @@ html, body {
   padding: 3px 9px;
   border-radius: 999px;
   white-space: nowrap;
+  flex: none;
+  margin-left: auto;
 }
 .status-badge.ok { background: var(--primary-soft); color: var(--primary-dark); }
 .status-badge.soon { background: var(--warn-soft); color: var(--warn); }
@@ -369,7 +414,30 @@ html, body {
 .modal-body { padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 14px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; font-weight: 600; }
+.field .hint { font-weight: 400; margin-top: -2px; }
 .required { color: var(--danger); }
+
+.image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 96px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  background: var(--surface-alt);
+  overflow: hidden;
+}
+.image-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.image-preview span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
 
 .modal-actions {
   display: flex;
