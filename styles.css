@@ -585,3 +585,5 @@ html, body {
   .topbar-inner { padding: 18px 24px 8px; }
   .tabs { padding: 0 18px; }
 }
+
+.app-version { text-align: center; font-size: 0.78rem; color: var(--text-muted); margin: 18px 0 0; }

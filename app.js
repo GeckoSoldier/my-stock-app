@@ -30,6 +30,9 @@ const state = {
   }
 };
 
+// アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
+const APP_VERSION = "2026.09.26-3";
+
 const SETUP_PARAM = "setup=";
 
 /* ---------------------------- Utilities -------------------------------- */
@@ -1141,6 +1144,7 @@ async function init() {
   loadSettings();
   initGeneralUI();
   initSettingsUI();
+  document.getElementById("appVersion").textContent = APP_VERSION;
 
   if (state.settings.syncMode === "cloud" && state.settings.firebaseConfig && state.settings.syncCode) {
     setSyncStatus("off", "接続中...");

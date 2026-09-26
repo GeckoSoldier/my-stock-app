@@ -1,14 +1,13 @@
 /* シンプルなオフラインキャッシュ用 Service Worker
-   ※ CORE_ASSETSは「ネットワーク優先」で取得します。
-      オンラインなら常に最新のファイルを表示し、オフライン時のみキャッシュを使います。
-      これにより、index.html/app.js/styles.cssなどを更新してデプロイし直せば、
-      次にページを開いたときに自動的に新しい内容が反映されます。 */
-const CACHE_NAME = "daily-stock-cache-v2";
+   ・オンラインのときは、毎回サーバーに「新しい版があるか」を確認してから表示します
+     （GitHub Pages はファイルをブラウザに10分間保存させるため、それを使わずに確認する）。
+   ・オフラインのときだけ、保存しておいたファイルで表示します。
+   ・index.html は app.js などを「app.js?v=バージョン」の形で読むので、
+     古い app.js と新しい index.html が混ざることもありません。 */
+const CACHE_NAME = "daily-stock-cache-v3";
 const CORE_ASSETS = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./app.js",
   "./manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
@@ -16,7 +15,9 @@ const CORE_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS)).catch(() => {})
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_ASSETS.map((u) => new Request(u, { cache: "no-cache" }))))
+      .catch(() => {})
   );
   self.skipWaiting();
 });
@@ -31,21 +32,25 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
+  const url = new URL(req.url);
 
-  // Firebase / 外部APIへのリクエストはキャッシュせずそのまま通す
+  // Firebase / 外部APIへのリクエストはそのまま通す
   if (url.origin !== self.location.origin) return;
-  if (event.request.method !== "GET") return;
+  if (req.method !== "GET") return;
 
-  // ネットワーク優先：オンラインなら常に最新を取りに行き、キャッシュも更新する。
-  // オフラインでネットワークが失敗したときだけ、保存しておいたキャッシュを返す。
+  // ネットワーク優先（ブラウザの一時保存を使わずにサーバーへ確認）。
+  // ※ページ本体（navigate）の Request はオプション付きで複製できないため、URL から取り直す
   event.respondWith(
-    fetch(event.request)
+    fetch(req.url, { cache: "no-cache", credentials: "same-origin" })
       .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        if (response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+        }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(() => caches.match(req).then((hit) =>
+        hit || (req.mode === "navigate" ? caches.match("./index.html") : undefined)))
   );
 });
