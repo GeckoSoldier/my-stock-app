@@ -289,6 +289,7 @@ html, body {
   border-radius: 999px;
   background: var(--surface-alt);
 }
+.stock-pill.half { background: #fdf3c4; color: #7a6000; }
 .stock-pill.low { background: var(--warn-soft); color: var(--warn); }
 .stock-pill.none { background: var(--danger-soft); color: var(--danger); }
 
@@ -418,7 +419,42 @@ html, body {
 .radio-row { display: flex; flex-direction: column; gap: 8px; }
 .radio-option { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
 
-.stock-radio { display: flex; gap: 14px; margin-top: 4px; }
+.stock-radio { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 4px; }
+.stock-radio .stock-auto { flex-basis: 100%; }
+.stock-estimate { margin-top: 2px; font-weight: 400; }
+
+/* 購入日の履歴と平均サイクル */
+.purchase-history {
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  font-weight: 400;
+}
+.ph-title { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; }
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.history-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 4px 3px 10px;
+  font-size: 0.8rem;
+}
+.history-chip button {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+}
+.purchase-history #historyEmpty { margin: 0; font-size: 0.8rem; }
+.avg-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.avg-text { font-size: 0.85rem; font-weight: 600; color: var(--text); flex: 1; min-width: 160px; }
+.btn-small { padding: 6px 12px; font-size: 0.8rem; }
 .stock-radio label { display: flex; align-items: center; gap: 5px; font-weight: 400; font-size: 0.88rem; cursor: pointer; }
 
 .chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

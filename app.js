@@ -440,6 +440,47 @@ async function deleteItemById(id) {
 
 /* ---------------------------- Cycle logic --------------------------------- */
 
+const STOCK_LABELS = { full: "十分", half: "半分程度", low: "少ない", none: "なし" };
+// 「半分程度」の範囲（推定残量％、両端を含む）
+const HALF_MAX = 65;
+const HALF_MIN = 30;
+
+/**
+ * 残量の入力方法。"auto"（前回購入日と購入サイクルから自動計算）か、手入力の段階
+ * （full / half / low / none）を返す。
+ * 以前のバージョンでは残量の初期値が「十分」だったため、旧データの「十分」は自動扱いにする。
+ */
+function stockMode(item) {
+  const lv = item.stockLevel;
+  if (!lv || lv === "auto") return "auto";
+  if (!item.stockV && lv === "full") return "auto";
+  return STOCK_LABELS[lv] ? lv : "auto";
+}
+
+// 推定残量（％、整数）。前回購入日からの経過日数を購入サイクルで割って計算する。
+function estimateRemainingPct(lastPurchased, cycleDays) {
+  const cycle = Number(cycleDays);
+  if (!lastPurchased || !(cycle > 0)) return null;
+  const daysLeft = daysBetween(todayStr(), addDays(lastPurchased, cycle));
+  return Math.round(Math.max(0, Math.min(1, daysLeft / cycle)) * 100);
+}
+
+function levelFromPct(pct) {
+  if (pct === null) return null;
+  if (pct > HALF_MAX) return "full";
+  if (pct >= HALF_MIN) return "half";
+  if (pct > 0) return "low";
+  return "none";
+}
+
+// { level, auto, pct } level は full/half/low/none、自動計算できないときは null
+function stockInfo(item) {
+  const mode = stockMode(item);
+  if (mode !== "auto") return { level: mode, auto: false, pct: null };
+  const pct = estimateRemainingPct(item.lastPurchased, item.cycleDays);
+  return { level: levelFromPct(pct), auto: true, pct };
+}
+
 function computeStatus(item) {
   const warnDays = getWarnDays();
   let daysLeft = null;
@@ -448,9 +489,12 @@ function computeStatus(item) {
     daysLeft = daysBetween(todayStr(), new Date(due));
   }
 
+  // 手入力の「少ない」「なし」はこれまでどおり「今買うもの」に入れる。
+  // 自動計算の場合は、これまでどおり「残り日数」で判定する。
+  const info = stockInfo(item);
   let status = "ok";
-  if (item.stockLevel === "none") status = "due";
-  else if (item.stockLevel === "low") status = "soon";
+  if (!info.auto && info.level === "none") status = "due";
+  else if (!info.auto && info.level === "low") status = "soon";
 
   if (daysLeft !== null) {
     if (daysLeft <= 0) status = "due";
@@ -491,8 +535,12 @@ function itemThumbHtml(item) {
 
 function itemCardHtml(item) {
   const { daysLeft, status } = computeStatus(item);
-  const stockLabel = { full: "十分", low: "少ない", none: "なし" }[item.stockLevel] || "十分";
-  const stockClass = item.stockLevel === "none" ? "none" : (item.stockLevel === "low" ? "low" : "");
+  const info = stockInfo(item);
+  let stockLabel;
+  if (info.level === null) stockLabel = "不明";
+  else if (info.auto) stockLabel = `${STOCK_LABELS[info.level]}（約${info.pct}%）`;
+  else stockLabel = STOCK_LABELS[info.level];
+  const stockClass = info.level || "";
   const cardClass = status === "due" ? "overdue" : (status === "soon" ? "urgent" : "");
 
   return `
@@ -534,6 +582,14 @@ function render() {
   const todayEmpty = document.getElementById("todayEmpty");
   todayList.innerHTML = todayItems.map((x) => itemCardHtml(x.item)).join("");
   todayEmpty.hidden = todayItems.length > 0;
+
+  // HALF list（「今買うもの」に入っているものは除く）
+  const halfItems = state.items
+    .map((i) => ({ item: i, ...computeStatus(i), info: stockInfo(i) }))
+    .filter((x) => x.status === "ok" && x.info.level === "half")
+    .sort((a, b) => (a.info.pct ?? 999) - (b.info.pct ?? 999));
+  document.getElementById("halfList").innerHTML = halfItems.map((x) => itemCardHtml(x.item)).join("");
+  document.getElementById("halfEmpty").hidden = halfItems.length > 0;
 
   // ALL list
   const search = (document.getElementById("searchBox").value || "").trim().toLowerCase();
@@ -603,9 +659,13 @@ function attachCardHandlers() {
       const id = btn.getAttribute("data-id");
       const item = state.items.find((i) => i.id === id);
       if (!item) return;
-      const history = Array.isArray(item.history) ? item.history.slice(-9) : [];
-      if (item.lastPurchased) history.push(item.lastPurchased);
-      const updated = { ...item, lastPurchased: todayStr(), stockLevel: "full", history, updatedAt: Date.now() };
+      const today = todayStr();
+      let history = Array.isArray(item.history) ? item.history.slice() : [];
+      if (item.lastPurchased && item.lastPurchased !== today && !history.includes(item.lastPurchased)) {
+        history.push(item.lastPurchased);
+      }
+      history = history.sort().slice(-10);
+      const updated = { ...item, lastPurchased: today, stockLevel: "auto", stockV: 2, history, updatedAt: Date.now() };
       await upsertItem(updated);
       showToast(`「${item.name}」を買った日を記録しました`);
     });
@@ -618,6 +678,7 @@ function switchTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   document.getElementById("panel-today").hidden = tab !== "today";
+  document.getElementById("panel-half").hidden = tab !== "half";
   document.getElementById("panel-all").hidden = tab !== "all";
   document.getElementById("panel-settings").hidden = tab !== "settings";
 }
@@ -637,6 +698,90 @@ function updateImagePreview() {
   img.src = url;
 }
 
+/* ---------- 残量の推定表示・購入履歴・平均サイクル（登録／編集画面） ---------- */
+
+// 編集中の購入日履歴（保存を押すまで商品には反映しない）
+let modalHistory = [];
+
+function checkedStockLevel() {
+  const r = document.querySelector('input[name="stockLevel"]:checked');
+  return r ? r.value : "auto";
+}
+
+function updateStockEstimate() {
+  const el = document.getElementById("stockEstimate");
+  const pct = estimateRemainingPct(
+    document.getElementById("itemLastPurchased").value,
+    document.getElementById("itemCycle").value
+  );
+  if (pct === null) {
+    el.textContent = "前回購入日と購入サイクルを入れると、推定残量を計算します。";
+  } else {
+    const lv = STOCK_LABELS[levelFromPct(pct)];
+    el.textContent = `推定残量：約${pct}%（${lv}）` +
+      (checkedStockLevel() === "auto" ? "" : " ※手入力の残量を優先しています");
+  }
+}
+
+// 表示する履歴：前回購入日を除いた、新しい順の最大4件
+function visibleHistory(lastPurchased) {
+  const uniq = Array.from(new Set(modalHistory.filter(Boolean)));
+  return uniq.filter((d) => d !== lastPurchased).sort().reverse().slice(0, 4);
+}
+
+/**
+ * 平均購入サイクル（日）。表示中の履歴（最大4件）と前回購入日の、
+ * 一番古い日から一番新しい日までの日数 ÷ 間隔の数。
+ */
+function averageCycle(lastPurchased, history) {
+  const dates = Array.from(new Set([...history, lastPurchased].filter(Boolean))).sort();
+  if (dates.length < 2) return null;
+  const span = daysBetween(dates[0], new Date(dates[dates.length - 1] + "T00:00:00"));
+  if (span <= 0) return null;
+  return { avg: span / (dates.length - 1), count: dates.length };
+}
+
+function renderPurchaseHistory() {
+  const last = document.getElementById("itemLastPurchased").value;
+  const hist = visibleHistory(last);
+  const list = document.getElementById("historyList");
+  list.innerHTML = hist.map((d) => `
+    <li class="history-chip"><span>${escapeHtml(d)}</span><button type="button" data-date="${escapeHtml(d)}" title="この履歴を削除" aria-label="${escapeHtml(d)} の履歴を削除">✕</button></li>
+  `).join("");
+  document.getElementById("historyEmpty").hidden = hist.length > 0;
+  list.querySelectorAll("button[data-date]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const d = b.getAttribute("data-date");
+      modalHistory = modalHistory.filter((x) => x !== d);
+      renderPurchaseHistory();
+    });
+  });
+
+  const avgText = document.getElementById("avgCycleText");
+  const btn = document.getElementById("btnApplyAvg");
+  const avg = averageCycle(last, hist);
+  if (!avg) {
+    avgText.textContent = "平均購入サイクル：購入日が2回分以上そろうと計算します";
+    btn.hidden = true;
+    btn.dataset.days = "";
+  } else {
+    const shown = Math.round(avg.avg * 10) / 10;
+    const applied = Math.max(1, Math.ceil(avg.avg));
+    avgText.textContent = `平均購入サイクル：約${shown}日（購入${avg.count}回分から計算）`;
+    btn.hidden = false;
+    btn.textContent = `購入サイクルに反映（${applied}日）`;
+    btn.dataset.days = String(applied);
+  }
+}
+
+function applyAverageCycle() {
+  const days = document.getElementById("btnApplyAvg").dataset.days;
+  if (!days) return;
+  document.getElementById("itemCycle").value = days;
+  updateStockEstimate();
+  showToast(`購入サイクルを${days}日にしました（保存で確定）`);
+}
+
 function openAddModal() {
   document.getElementById("modalTitle").textContent = "商品を追加";
   document.getElementById("itemForm").reset();
@@ -644,7 +789,11 @@ function openAddModal() {
   document.getElementById("itemLastPurchased").value = todayStr();
   document.getElementById("btnDeleteItem").hidden = true;
   document.getElementById("imagePreviewWrap").hidden = true;
+  document.querySelectorAll('input[name="stockLevel"]').forEach((r) => { r.checked = r.value === "auto"; });
+  modalHistory = [];
   renderCategorySelects();
+  renderPurchaseHistory();
+  updateStockEstimate();
   document.getElementById("itemModalOverlay").hidden = false;
 }
 
@@ -660,10 +809,13 @@ function openEditModal(id) {
   document.getElementById("itemCycle").value = item.cycleDays || "";
   document.getElementById("itemLastPurchased").value = item.lastPurchased || "";
   document.getElementById("itemMemo").value = item.memo || "";
-  const radios = document.querySelectorAll('input[name="stockLevel"]');
-  radios.forEach((r) => { r.checked = r.value === (item.stockLevel || "full"); });
+  const mode = stockMode(item);
+  document.querySelectorAll('input[name="stockLevel"]').forEach((r) => { r.checked = r.value === mode; });
   document.getElementById("btnDeleteItem").hidden = false;
+  modalHistory = Array.isArray(item.history) ? item.history.slice() : [];
   updateImagePreview();
+  renderPurchaseHistory();
+  updateStockEstimate();
   document.getElementById("itemModalOverlay").hidden = false;
 }
 
@@ -675,7 +827,7 @@ async function handleItemFormSubmit(e) {
   e.preventDefault();
   const id = document.getElementById("itemId").value || uid();
   const existing = state.items.find((i) => i.id === id);
-  const stockLevel = document.querySelector('input[name="stockLevel"]:checked').value;
+  const lastPurchased = document.getElementById("itemLastPurchased").value || null;
 
   const item = {
     id,
@@ -683,10 +835,11 @@ async function handleItemFormSubmit(e) {
     imageUrl: document.getElementById("itemImageUrl").value.trim(),
     category: document.getElementById("itemCategory").value,
     cycleDays: Number(document.getElementById("itemCycle").value) || 30,
-    lastPurchased: document.getElementById("itemLastPurchased").value || null,
-    stockLevel,
+    lastPurchased,
+    stockLevel: checkedStockLevel(),
+    stockV: 2,
     memo: document.getElementById("itemMemo").value.trim(),
-    history: existing ? existing.history || [] : [],
+    history: Array.from(new Set(modalHistory.filter((d) => d && d !== lastPurchased))).sort().slice(-10),
     createdAt: existing && existing.createdAt ? existing.createdAt : Date.now(),
     updatedAt: Date.now()
   };
@@ -966,6 +1119,12 @@ function initGeneralUI() {
   document.getElementById("itemForm").addEventListener("submit", handleItemFormSubmit);
   document.getElementById("btnDeleteItem").addEventListener("click", handleDeleteItem);
   document.getElementById("itemImageUrl").addEventListener("input", updateImagePreview);
+  ["input", "change"].forEach((ev) => {
+    document.getElementById("itemLastPurchased").addEventListener(ev, () => { renderPurchaseHistory(); updateStockEstimate(); });
+    document.getElementById("itemCycle").addEventListener(ev, updateStockEstimate);
+  });
+  document.querySelectorAll('input[name="stockLevel"]').forEach((r) => r.addEventListener("change", updateStockEstimate));
+  document.getElementById("btnApplyAvg").addEventListener("click", applyAverageCycle);
 
   document.getElementById("searchBox").addEventListener("input", render);
   document.getElementById("categoryFilter").addEventListener("change", render);

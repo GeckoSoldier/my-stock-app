@@ -30,6 +30,7 @@
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="today">今買うもの</button>
+      <button class="tab" data-tab="half">半分程度</button>
       <button class="tab" data-tab="all">すべての商品</button>
       <button class="tab" data-tab="settings">設定</button>
     </nav>
@@ -46,6 +47,18 @@
       <div id="todayList" class="item-list"></div>
       <div id="todayEmpty" class="empty-state" hidden>
         <p>今すぐ買うものはありません 🎉</p>
+      </div>
+    </section>
+
+    <!-- HALF VIEW -->
+    <section class="panel" id="panel-half" hidden>
+      <div class="panel-head">
+        <h2>半分程度</h2>
+        <p class="hint">残量が半分程度（推定残量65〜30%）の商品です。残りが少ない順に並んでいます。次の買い物の候補にどうぞ。</p>
+      </div>
+      <div id="halfList" class="item-list"></div>
+      <div id="halfEmpty" class="empty-state" hidden>
+        <p>残量が半分程度の商品はありません。</p>
       </div>
     </section>
 
@@ -200,19 +213,31 @@
           <input type="number" id="itemCycle" class="input" min="1" required placeholder="例：30">
         </label>
 
-        <label class="field">
-          <span>前回購入日</span>
+        <div class="field">
+          <label for="itemLastPurchased">前回購入日</label>
           <input type="date" id="itemLastPurchased" class="input">
-        </label>
+          <div class="purchase-history">
+            <div class="ph-title">購入日の履歴（前回より前、過去4回まで）</div>
+            <ul id="historyList" class="history-list"></ul>
+            <p id="historyEmpty" class="hint">まだ履歴はありません。一覧の「買った（補充）」を押すたびに記録されます。</p>
+            <div class="avg-row">
+              <span id="avgCycleText" class="avg-text"></span>
+              <button type="button" class="btn btn-secondary btn-small" id="btnApplyAvg" hidden>購入サイクルに反映</button>
+            </div>
+          </div>
+        </div>
 
-        <label class="field">
+        <div class="field">
           <span>現在の残量</span>
           <div class="stock-radio">
-            <label><input type="radio" name="stockLevel" value="full" checked><span>十分</span></label>
+            <label class="stock-auto"><input type="radio" name="stockLevel" value="auto" checked><span>自動（購入日とサイクルから計算）</span></label>
+            <label><input type="radio" name="stockLevel" value="full"><span>十分</span></label>
+            <label><input type="radio" name="stockLevel" value="half"><span>半分程度</span></label>
             <label><input type="radio" name="stockLevel" value="low"><span>少ない</span></label>
             <label><input type="radio" name="stockLevel" value="none"><span>なし</span></label>
           </div>
-        </label>
+          <p id="stockEstimate" class="hint stock-estimate"></p>
+        </div>
 
         <label class="field">
           <span>メモ</span>
