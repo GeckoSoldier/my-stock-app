@@ -587,3 +587,62 @@ html, body {
 }
 
 .app-version { text-align: center; font-size: 0.78rem; color: var(--text-muted); margin: 18px 0 0; }
+
+/* ---------- 商品画像：写真／URL の切り替え ---------- */
+.seg {
+  display: inline-flex;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+  align-self: flex-start;
+  font-weight: 600;
+}
+.seg label { cursor: pointer; position: relative; }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg span {
+  display: block;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.seg input:checked + span { background: var(--surface); color: var(--primary-dark); box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.seg input:focus-visible + span { outline: 2px solid var(--primary); }
+#imageUploadBox .hint, #imageUrlBox .hint { margin-top: 6px; }
+#imageUrlBox .input { width: 100%; }
+
+button.item-thumb-wrap {
+  padding: 0;
+  font: inherit;
+  appearance: none;
+  cursor: zoom-in;
+}
+
+/* 写真の拡大表示 */
+.photo-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(15, 15, 12, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  cursor: zoom-out;
+}
+.photo-viewer[hidden] { display: none; }
+.photo-viewer img {
+  max-width: min(92vw, 520px);
+  max-height: 75vh;
+  border-radius: 12px;
+  background: #fff;
+}
+.photo-viewer p { color: #fff; margin: 0; font-size: 0.95rem; }
+
+/* リマインド */
+.time-input { width: 130px; }
+.reminder-buttons { margin: 14px 0 10px; }

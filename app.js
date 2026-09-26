@@ -31,7 +31,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.09.26-3";
+const APP_VERSION = "2026.09.27-1";
 
 const SETUP_PARAM = "setup=";
 
@@ -227,7 +227,14 @@ function loadLocalItems() {
 }
 
 function saveLocalItems() {
-  try { localStorage.setItem(LOCAL_ITEMS_KEY, JSON.stringify(state.items)); } catch (e) { console.warn(e); }
+  try {
+    localStorage.setItem(LOCAL_ITEMS_KEY, JSON.stringify(state.items));
+    return true;
+  } catch (e) {
+    console.warn(e);
+    showToast("この端末の保存容量がいっぱいです。写真を外すか、クラウド同期をお使いください");
+    return false;
+  }
 }
 
 /* ---------------------------- Cloud (Firestore) -------------------------- */
@@ -413,17 +420,20 @@ async function upsertItem(item) {
   if (state.settings.syncMode === "cloud" && state.cloud.ready) {
     try {
       await cloudCollection().doc(item.id).set(sanitizeForCloud(item), { merge: true });
+      return true; // 画面は onSnapshot 経由で更新される
     } catch (e) {
       console.error(e);
       showToast(describeFirebaseError(e));
+      return false;
     }
-    // 画面は onSnapshot 経由で更新される
-  } else {
-    const idx = state.items.findIndex((i) => i.id === item.id);
-    if (idx >= 0) state.items[idx] = item; else state.items.push(item);
-    saveLocalItems();
-    render();
   }
+  const prev = state.items.slice();
+  const idx = state.items.findIndex((i) => i.id === item.id);
+  if (idx >= 0) state.items[idx] = item; else state.items.push(item);
+  const ok = saveLocalItems();
+  if (!ok) state.items = prev; // 保存できなかったら元に戻す
+  render();
+  return ok;
 }
 
 async function deleteItemById(id) {
@@ -522,11 +532,24 @@ function statusLabel(status, daysLeft) {
 
 /* ---------------------------- Rendering ----------------------------------- */
 
+// 商品画像の種類："upload"（アップロードした写真） / "url"（画像のURL）。旧データは URL 扱い
+function itemImageSource(item) {
+  return item.imageSource === "upload" ? "upload" : "url";
+}
+
 function itemThumbHtml(item) {
-  const url = item.imageUrl ? escapeHtml(item.imageUrl) : "";
   const fallbackEmoji = "🧺";
+  const source = itemImageSource(item);
+  if (source === "upload" && item.imageData) {
+    return `
+    <button type="button" class="item-thumb-wrap item-thumb-photo" data-action="photo" data-id="${escapeHtml(item.id)}" title="写真を大きく表示" aria-label="写真を大きく表示">
+      <span class="item-thumb-fallback">${fallbackEmoji}</span>
+      <img class="item-thumb-img" src="${escapeHtml(item.imageData)}" alt="" onerror="this.style.display='none'">
+    </button>`;
+  }
+  const url = source === "url" && item.imageUrl ? escapeHtml(item.imageUrl) : "";
   if (!url) {
-    return `<span class="item-thumb-wrap item-thumb-empty" title="画像URL未登録"><span class="item-thumb-fallback">${fallbackEmoji}</span></span>`;
+    return `<span class="item-thumb-wrap item-thumb-empty" title="画像未登録"><span class="item-thumb-fallback">${fallbackEmoji}</span></span>`;
   }
   return `
     <a class="item-thumb-wrap" href="${url}" target="_blank" rel="noopener noreferrer" title="クリックでこのURLを開く" onclick="event.stopPropagation()">
@@ -650,6 +673,13 @@ function attachCardHandlers() {
       openEditModal(card.getAttribute("data-id"));
     });
   });
+  document.querySelectorAll('[data-action="photo"]').forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const item = state.items.find((i) => i.id === btn.getAttribute("data-id"));
+      if (item) openPhotoViewer(item);
+    });
+  });
   document.querySelectorAll('[data-action="edit"]').forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -669,8 +699,7 @@ function attachCardHandlers() {
       }
       history = history.sort().slice(-10);
       const updated = { ...item, lastPurchased: today, stockLevel: "auto", stockV: 2, history, updatedAt: Date.now() };
-      await upsertItem(updated);
-      showToast(`「${item.name}」を買った日を記録しました`);
+      if (await upsertItem(updated)) showToast(`「${item.name}」を買った日を記録しました`);
     });
   });
 }
@@ -688,17 +717,106 @@ function switchTab(tab) {
 
 /* ---------------------------- Modal ----------------------------------------- */
 
+// 登録／編集画面でアップロード中の写真（保存を押すまで商品には反映しない）
+let modalImageData = "";
+
+function checkedImageSource() {
+  const r = document.querySelector('input[name="imageSource"]:checked');
+  return r ? r.value : "url";
+}
+
+function setImageSource(source) {
+  document.querySelectorAll('input[name="imageSource"]').forEach((r) => { r.checked = r.value === source; });
+  applyImageSourceUI();
+}
+
+function applyImageSourceUI() {
+  const upload = checkedImageSource() === "upload";
+  document.getElementById("imageUploadBox").hidden = !upload;
+  document.getElementById("imageUrlBox").hidden = upload;
+  document.getElementById("btnClearPhoto").hidden = !modalImageData;
+  document.getElementById("btnPickPhoto").textContent = modalImageData ? "写真を撮り直す／選び直す" : "写真を撮る／選ぶ";
+  updateImagePreview();
+}
+
 function updateImagePreview() {
-  const url = document.getElementById("itemImageUrl").value.trim();
   const wrap = document.getElementById("imagePreviewWrap");
   const img = document.getElementById("imagePreviewImg");
   const fallback = document.getElementById("imagePreviewFallback");
-  if (!url) { wrap.hidden = true; return; }
+  const upload = checkedImageSource() === "upload";
+  const src = upload ? modalImageData : document.getElementById("itemImageUrl").value.trim();
+  if (!src) { wrap.hidden = true; return; }
   wrap.hidden = false;
   fallback.hidden = true;
   img.hidden = false;
   img.onerror = () => { img.hidden = true; fallback.hidden = false; };
-  img.src = url;
+  img.src = src;
+}
+
+/**
+ * 写真を端末の中で縮小して JPEG の文字列（data URL）にする。
+ * 一覧のアイコンと拡大表示に十分な大きさ（長い辺 480px）にし、保存・同期の負担を小さくする。
+ */
+function compressImage(file, maxSide = 480) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";           // 透過PNGの背景を白に
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        let quality = 0.8;
+        let data = canvas.toDataURL("image/jpeg", quality);
+        while (data.length > 120000 && quality > 0.45) {  // 大きすぎるときは画質を少し下げる
+          quality -= 0.1;
+          data = canvas.toDataURL("image/jpeg", quality);
+        }
+        resolve(data);
+      } catch (e) {
+        reject(e);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error("decode-failed")); };
+    img.src = objectUrl;
+  });
+}
+
+async function handlePhotoSelected(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const btn = document.getElementById("btnPickPhoto");
+  btn.disabled = true;
+  btn.textContent = "写真を読み込み中...";
+  try {
+    modalImageData = await compressImage(file);
+  } catch (err) {
+    console.error(err);
+    showToast("この写真は読み込めませんでした。JPEG や PNG の写真を選んでください");
+  }
+  btn.disabled = false;
+  applyImageSourceUI();
+}
+
+function openPhotoViewer(item) {
+  document.getElementById("photoViewerImg").src = item.imageData;
+  document.getElementById("photoViewerCaption").textContent = item.name || "";
+  document.getElementById("photoViewer").hidden = false;
+}
+
+function closePhotoViewer() {
+  document.getElementById("photoViewer").hidden = true;
+  document.getElementById("photoViewerImg").src = "";
 }
 
 /* ---------- 残量の推定表示・購入履歴・平均サイクル（登録／編集画面） ---------- */
@@ -791,9 +909,10 @@ function openAddModal() {
   document.getElementById("itemId").value = "";
   document.getElementById("itemLastPurchased").value = todayStr();
   document.getElementById("btnDeleteItem").hidden = true;
-  document.getElementById("imagePreviewWrap").hidden = true;
   document.querySelectorAll('input[name="stockLevel"]').forEach((r) => { r.checked = r.value === "auto"; });
   modalHistory = [];
+  modalImageData = "";
+  setImageSource("upload");
   renderCategorySelects();
   renderPurchaseHistory();
   updateStockEstimate();
@@ -816,7 +935,8 @@ function openEditModal(id) {
   document.querySelectorAll('input[name="stockLevel"]').forEach((r) => { r.checked = r.value === mode; });
   document.getElementById("btnDeleteItem").hidden = false;
   modalHistory = Array.isArray(item.history) ? item.history.slice() : [];
-  updateImagePreview();
+  modalImageData = item.imageData || "";
+  setImageSource(itemImageSource(item));
   renderPurchaseHistory();
   updateStockEstimate();
   document.getElementById("itemModalOverlay").hidden = false;
@@ -835,7 +955,9 @@ async function handleItemFormSubmit(e) {
   const item = {
     id,
     name: document.getElementById("itemName").value.trim(),
+    imageSource: checkedImageSource(),
     imageUrl: document.getElementById("itemImageUrl").value.trim(),
+    imageData: modalImageData || "",
     category: document.getElementById("itemCategory").value,
     cycleDays: Number(document.getElementById("itemCycle").value) || 30,
     lastPurchased,
@@ -849,7 +971,8 @@ async function handleItemFormSubmit(e) {
 
   if (!item.name) return;
 
-  await upsertItem(item);
+  // 保存できなかったときは画面を閉じない（入力した内容を失わないように）
+  if (!(await upsertItem(item))) return;
   closeModal();
   showToast("保存しました");
 }
@@ -861,6 +984,131 @@ async function handleDeleteItem() {
   await deleteItemById(id);
   closeModal();
   showToast("削除しました");
+}
+
+/* ---------------------------- リマインド（カレンダー登録） -------------------- */
+
+const REMINDER_TITLE = "日用品の買い物チェック（今買うもの）";
+const pad2 = (n) => String(n).padStart(2, "0");
+
+// 次にお知らせする日時（今日のその時刻を過ぎていたら明日）
+function nextReminderStart(timeStr) {
+  const [h, m] = String(timeStr || "18:00").split(":").map((x) => Number(x) || 0);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+  if (start <= now) start.setDate(start.getDate() + 1);
+  return start;
+}
+
+function fmtLocalDateTime(d) {
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+}
+
+// 予定から開くと「今買うもの」タブが表示されるURL
+function appTodayUrl() {
+  return location.href.split("#")[0] + "#tab=today";
+}
+
+function googleCalendarUrl(timeStr) {
+  const start = nextReminderStart(timeStr);
+  const end = new Date(start.getTime() + 15 * 60000);
+  let tz = "Asia/Tokyo";
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; } catch (e) { /* 既定のまま */ }
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: REMINDER_TITLE,
+    dates: `${fmtLocalDateTime(start)}/${fmtLocalDateTime(end)}`,
+    ctz: tz,
+    recur: "RRULE:FREQ=DAILY",
+    details: `「今買うもの」を確認しましょう。\n${appTodayUrl()}`
+  });
+  return "https://calendar.google.com/calendar/render?" + params.toString();
+}
+
+function icsEscape(text) {
+  return String(text).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+
+// .ics は1行75バイトまでなので、それを超える行は折り返す
+function icsFold(line) {
+  const enc = new TextEncoder();
+  let out = "";
+  let cur = "";
+  let len = 0;
+  for (const ch of line) {
+    const n = enc.encode(ch).length;
+    if (len + n > 75) {
+      out += cur + "\r\n ";
+      cur = "";
+      len = 1;
+    }
+    cur += ch;
+    len += n;
+  }
+  return out + cur;
+}
+
+function buildReminderIcs(timeStr) {
+  const start = nextReminderStart(timeStr);
+  const end = new Date(start.getTime() + 15 * 60000);
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const url = appTodayUrl();
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//DailyStock//Reminder//JA",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    "BEGIN:VEVENT",
+    `UID:${uid()}@daily-stock`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART:${fmtLocalDateTime(start)}`,   // 端末の時刻（タイムゾーン指定なし）で毎日その時刻
+    `DTEND:${fmtLocalDateTime(end)}`,
+    "RRULE:FREQ=DAILY",
+    `SUMMARY:${icsEscape(REMINDER_TITLE)}`,
+    `DESCRIPTION:${icsEscape("「今買うもの」を確認しましょう。\n" + url)}`,
+    `URL:${url}`,
+    "BEGIN:VALARM",
+    "ACTION:DISPLAY",
+    `DESCRIPTION:${icsEscape(REMINDER_TITLE)}`,
+    "TRIGGER:PT0M",                           // 予定の時刻ちょうどに通知
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR"
+  ];
+  return lines.map(icsFold).join("\r\n") + "\r\n";
+}
+
+function initReminderUI() {
+  const input = document.getElementById("remindTime");
+  input.value = state.settings.remindTime || "18:00";
+  input.addEventListener("change", () => {
+    state.settings.remindTime = input.value || "18:00";
+    saveSettings();
+  });
+  document.getElementById("btnGoogleCal").addEventListener("click", () => {
+    window.open(googleCalendarUrl(input.value), "_blank", "noopener");
+  });
+  document.getElementById("btnIcs").addEventListener("click", () => {
+    const blob = new Blob([buildReminderIcs(input.value)], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "daily-stock-reminder.ics";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    showToast("カレンダー用ファイルを作りました。開いてカレンダーに追加してください");
+  });
+}
+
+// URL の #tab=today などで開かれたとき、そのタブを表示する
+function handleTabHash() {
+  if (!location.hash.startsWith("#tab=")) return;
+  const tab = decodeURIComponent(location.hash.slice(5));
+  history.replaceState(null, "", location.href.split("#")[0]);
+  if (["today", "half", "all", "settings"].includes(tab)) switchTab(tab);
 }
 
 /* ---------------------------- Settings UI ----------------------------------- */
@@ -1122,6 +1370,12 @@ function initGeneralUI() {
   document.getElementById("itemForm").addEventListener("submit", handleItemFormSubmit);
   document.getElementById("btnDeleteItem").addEventListener("click", handleDeleteItem);
   document.getElementById("itemImageUrl").addEventListener("input", updateImagePreview);
+  document.querySelectorAll('input[name="imageSource"]').forEach((r) => r.addEventListener("change", applyImageSourceUI));
+  document.getElementById("btnPickPhoto").addEventListener("click", () => document.getElementById("itemImageFile").click());
+  document.getElementById("itemImageFile").addEventListener("change", handlePhotoSelected);
+  document.getElementById("btnClearPhoto").addEventListener("click", () => { modalImageData = ""; applyImageSourceUI(); });
+  document.getElementById("photoViewer").addEventListener("click", closePhotoViewer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePhotoViewer(); });
   ["input", "change"].forEach((ev) => {
     document.getElementById("itemLastPurchased").addEventListener(ev, () => { renderPurchaseHistory(); updateStockEstimate(); });
     document.getElementById("itemCycle").addEventListener(ev, updateStockEstimate);
@@ -1145,6 +1399,7 @@ async function init() {
   initGeneralUI();
   initSettingsUI();
   document.getElementById("appVersion").textContent = APP_VERSION;
+  initReminderUI();
 
   if (state.settings.syncMode === "cloud" && state.settings.firebaseConfig && state.settings.syncCode) {
     setSyncStatus("off", "接続中...");
@@ -1163,9 +1418,11 @@ async function init() {
   updateShareCard();
 
   if (setupHash) await handleSetupLinkOnLoad(setupHash);
+  handleTabHash();
 
   // アプリを開いたままのタブで接続用リンクを開いた場合（ページは再読み込みされず # 以降だけが変わる）
   window.addEventListener("hashchange", () => {
+    if (location.hash.startsWith("#tab=")) { handleTabHash(); return; }
     if (!location.hash.includes(SETUP_PARAM)) return;
     const hash = location.hash;
     history.replaceState(null, "", location.href.split("#")[0]);
