@@ -16,16 +16,21 @@ const state = {
     warnDays: 3,
     categories: [...DEFAULT_CATEGORIES],
     firebaseConfig: null,
-    syncCode: ""
+    syncCode: "",
+    mergedCodes: []          // この端末のカテゴリをクラウドと統合済みの共有コード
   },
   activeTab: "today",
   cloud: {
     app: null,
     db: null,
     unsub: null,
+    metaUnsub: null,
+    sharedOk: false,         // カテゴリなどの共有設定が同期できているか
     ready: false
   }
 };
+
+const SETUP_PARAM = "setup=";
 
 /* ---------------------------- Utilities -------------------------------- */
 
@@ -71,6 +76,62 @@ function escapeHtml(str) {
 // Firestore は undefined を保存できないため、JSON を経由して取り除く
 function sanitizeForCloud(obj) {
   return JSON.parse(JSON.stringify(obj));
+}
+
+// 「まもなく」の日数（0日も有効な値として扱う）
+function getWarnDays() {
+  const v = Number(state.settings.warnDays);
+  return Number.isFinite(v) && v >= 0 ? v : 3;
+}
+
+function base64UrlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  bytes.forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlDecode(s) {
+  let t = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (t.length % 4) t += "=";
+  const bin = atob(t);
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+/* ---------------------------- 接続用リンク -------------------------------- */
+
+// 接続用リンク: 「アプリのURL#setup=（Firebase設定と共有コードを短くまとめたもの）」
+// 「#」より後ろはブラウザの外（GitHubのサーバーなど）には送られません。
+function buildSetupLink() {
+  const cfg = state.settings.firebaseConfig || {};
+  const code = (state.settings.syncCode || "").trim();
+  const payload = { v: 1, a: cfg.apiKey, p: cfg.projectId, i: cfg.appId, k: code };
+  if (cfg.authDomain && cfg.authDomain !== `${cfg.projectId}.firebaseapp.com`) payload.d = cfg.authDomain;
+  const base = location.href.split("#")[0];
+  return `${base}#${SETUP_PARAM}${base64UrlEncode(JSON.stringify(payload))}`;
+}
+
+function parseSetupLink(text) {
+  const t = (text || "").trim();
+  if (!t) return null;
+  const idx = t.indexOf(SETUP_PARAM);
+  const token = (idx >= 0 ? t.slice(idx + SETUP_PARAM.length) : t).split(/[&\s]/)[0];
+  try {
+    const obj = JSON.parse(base64UrlDecode(token));
+    if (!obj || !obj.a || !obj.p || !obj.i || !obj.k) return null;
+    return {
+      config: {
+        apiKey: obj.a,
+        authDomain: obj.d || `${obj.p}.firebaseapp.com`,
+        projectId: obj.p,
+        appId: obj.i
+      },
+      code: String(obj.k)
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 /* ---------------------------- Firebase 設定の読み取り -------------------- */
@@ -179,8 +240,90 @@ function setSyncStatus(mode, label) {
 
 function stopCloud() {
   if (state.cloud.unsub) { state.cloud.unsub(); state.cloud.unsub = null; }
+  if (state.cloud.metaUnsub) { state.cloud.metaUnsub(); state.cloud.metaUnsub = null; }
   state.cloud.ready = false;
+  state.cloud.sharedOk = false;
 }
+
+function metaRef(code) {
+  return state.cloud.db.collection("households").doc(code).collection("meta").doc("settings");
+}
+
+// クラウドから届いた共有設定（カテゴリ・判定日数）をこの端末に反映する
+function applySharedSettings(data) {
+  if (!data) return;
+  if (Array.isArray(data.categories)) state.settings.categories = data.categories.slice();
+  if (typeof data.warnDays === "number") {
+    state.settings.warnDays = data.warnDays;
+    document.getElementById("warnDays").value = data.warnDays;
+  }
+  saveSettings();
+  render();
+}
+
+/**
+ * カテゴリなどの共有設定の同期を始める。
+ * ・クラウドにまだ無ければ、この端末の設定をクラウドに保存する
+ * ・この端末がこの共有コードに初めて接続したときは、端末側にしか無いカテゴリを
+ *   クラウドに足し合わせる（どちらかの端末のカテゴリが消えてしまわないように）
+ * ・以降はクラウドの内容を正として、変更をリアルタイムで受け取る
+ * Firestoreのルールが古いままだと読み書きできないので、その場合は false を返す。
+ */
+async function setupSharedSettings(code) {
+  const ref = metaRef(code);
+  try {
+    const snap = await ref.get();
+    const localCats = state.settings.categories || [];
+    const localWarn = getWarnDays();
+    const alreadyMerged = (state.settings.mergedCodes || []).includes(code);
+
+    if (!snap.exists) {
+      await ref.set(sanitizeForCloud({ categories: localCats, warnDays: localWarn, updatedAt: Date.now() }));
+    } else if (!alreadyMerged) {
+      const cloud = snap.data() || {};
+      const cloudCats = Array.isArray(cloud.categories) ? cloud.categories : [];
+      const union = cloudCats.concat(localCats.filter((c) => !cloudCats.includes(c)));
+      const cloudWarn = typeof cloud.warnDays === "number" ? cloud.warnDays : localWarn;
+      if (union.length !== cloudCats.length || typeof cloud.warnDays !== "number") {
+        await ref.set(sanitizeForCloud({ categories: union, warnDays: cloudWarn, updatedAt: Date.now() }), { merge: true });
+      }
+    }
+
+    state.settings.mergedCodes = Array.from(new Set([...(state.settings.mergedCodes || []), code]));
+    saveSettings();
+
+    state.cloud.metaUnsub = ref.onSnapshot((doc) => {
+      if (doc.exists) applySharedSettings(doc.data());
+    }, (err) => {
+      console.warn(err);
+      state.cloud.sharedOk = false;
+    });
+    state.cloud.sharedOk = true;
+    return true;
+  } catch (e) {
+    console.warn("共有設定を同期できません", e);
+    state.cloud.sharedOk = false;
+    return false;
+  }
+}
+
+// カテゴリ・判定日数を変更したときに呼ぶ（この端末に保存し、同期中ならクラウドにも保存）
+function saveSharedSettings() {
+  saveSettings();
+  if (state.settings.syncMode === "cloud" && state.cloud.ready && state.cloud.sharedOk) {
+    const code = (state.settings.syncCode || "").trim();
+    metaRef(code).set(sanitizeForCloud({
+      categories: state.settings.categories,
+      warnDays: getWarnDays(),
+      updatedAt: Date.now()
+    }), { merge: true }).catch((e) => {
+      console.error(e);
+      showToast(describeFirebaseError(e));
+    });
+  }
+}
+
+const RULES_UPDATE_NOTE = "※カテゴリと「まもなく」の日数は、まだ同期されていません。Firestoreの「ルール」を新しいもの（手順書の手順C）に貼り替えて「公開」してから、アプリを再読み込みしてください。商品の同期は問題なく動いています。";
 
 /**
  * Firestore に接続する。
@@ -230,6 +373,9 @@ async function connectCloud(options = {}) {
       }
     }
 
+    // カテゴリなどの共有設定（ルールが古い場合は商品だけ同期を続ける）
+    const sharedOk = await setupSharedSettings(code);
+
     state.cloud.unsub = colRef.onSnapshot((snap) => {
       const items = [];
       snap.forEach((doc) => items.push({ ...doc.data(), id: doc.id }));
@@ -244,7 +390,7 @@ async function connectCloud(options = {}) {
 
     state.cloud.ready = true;
     setSyncStatus("on", "同期中：" + code);
-    return { ok: true };
+    return { ok: true, sharedOk };
   } catch (e) {
     console.error(e);
     stopCloud();
@@ -295,7 +441,7 @@ async function deleteItemById(id) {
 /* ---------------------------- Cycle logic --------------------------------- */
 
 function computeStatus(item) {
-  const warnDays = Number(state.settings.warnDays) || 3;
+  const warnDays = getWarnDays();
   let daysLeft = null;
   if (item.lastPurchased && item.cycleDays) {
     const due = addDays(item.lastPurchased, Number(item.cycleDays));
@@ -427,8 +573,12 @@ function renderCategoryChips() {
   wrap.querySelectorAll("button[data-cat]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const cat = btn.getAttribute("data-cat");
+      if (state.settings.categories.length <= 1) {
+        showToast("カテゴリは1つ以上必要です");
+        return;
+      }
       state.settings.categories = state.settings.categories.filter((c) => c !== cat);
-      saveSettings();
+      saveSharedSettings();
       render();
     });
   });
@@ -566,6 +716,87 @@ function showConnectResult(kind, message) {
   el.textContent = message || "";
 }
 
+function hideSharePanel() {
+  document.getElementById("sharePanel").hidden = true;
+  document.getElementById("qrBox").innerHTML = "";
+  document.getElementById("setupLinkOutput").value = "";
+  document.getElementById("btnShowShare").hidden = false;
+}
+
+// 同期中のときだけ「他の端末を追加する」を表示する
+function updateShareCard() {
+  const connected = state.settings.syncMode === "cloud" && state.cloud.ready;
+  document.getElementById("shareCard").hidden = !connected;
+  if (!connected) hideSharePanel();
+}
+
+/**
+ * 指定したFirebase設定と共有コードでクラウド同期に接続する。
+ * 「保存して接続」「接続用リンク」の両方から使う。
+ */
+async function connectWith(cfg, code, button) {
+  if (button) button.disabled = true;
+  showConnectResult(null, "接続中です...");
+
+  const prev = { ...state.settings };
+  state.settings.firebaseConfig = cfg;
+  state.settings.syncCode = code;
+
+  const result = await connectCloud({ offerMigration: true });
+  if (button) button.disabled = false;
+
+  if (result.ok) {
+    state.settings.syncMode = "cloud";
+    saveSettings();
+    document.getElementById("modeCloud").checked = true;
+    document.getElementById("cloudSettings").hidden = false;
+    document.getElementById("firebaseConfig").value = JSON.stringify(cfg, null, 2);
+    document.getElementById("syncCode").value = code;
+    let msg = `接続しました。共有コード「${code}」でクラウド同期中です。\n他の端末を追加するときは、下の「他の端末を追加する」から接続用リンクやQRコードを使えます。`;
+    if (!result.sharedOk) msg += "\n" + RULES_UPDATE_NOTE;
+    showConnectResult("ok", msg);
+  } else {
+    // 失敗したら元の状態に戻す
+    state.settings = prev;
+    saveSettings();
+    if (prev.syncMode === "cloud" && prev.firebaseConfig && prev.syncCode) {
+      await connectCloud(); // 元の共有コードにつなぎ直す
+    } else {
+      setSyncStatus("off", "この端末のみ");
+      loadLocalItems();
+      render();
+    }
+    showConnectResult("error", result.message);
+  }
+  updateShareCard();
+  return result;
+}
+
+// 接続用リンクから開かれたとき（URLの # 以降に setup= が付いている）
+async function handleSetupLinkOnLoad(hash) {
+  const setup = parseSetupLink(hash);
+  if (!setup) {
+    showToast("接続用リンクを読み取れませんでした");
+    return;
+  }
+  const cur = state.settings;
+  if (cur.syncMode === "cloud" && state.cloud.ready && cur.syncCode === setup.code &&
+      cur.firebaseConfig && cur.firebaseConfig.projectId === setup.config.projectId) {
+    showToast("この端末はすでに同期中です");
+    return;
+  }
+  const ok = confirm(
+    "この端末をクラウド同期に接続しますか？\n\n" +
+    `Firebaseプロジェクト：${setup.config.projectId}\n共有コード：${setup.code}\n\n` +
+    "心当たりのないリンクの場合は「キャンセル」を押してください。"
+  );
+  if (!ok) return;
+  switchTab("settings");
+  document.getElementById("modeCloud").checked = true;
+  document.getElementById("cloudSettings").hidden = false;
+  await connectWith(setup.config, setup.code, null);
+}
+
 function initSettingsUI() {
   document.getElementById("modeLocal").checked = state.settings.syncMode === "local";
   document.getElementById("modeCloud").checked = state.settings.syncMode === "cloud";
@@ -586,6 +817,7 @@ function initSettingsUI() {
         loadLocalItems();
         setSyncStatus("off", "この端末のみ");
         showConnectResult(null, "");
+        updateShareCard();
         render();
       }
       // 「クラウド同期する」は「保存して接続」が成功した時点で切り替える
@@ -598,7 +830,6 @@ function initSettingsUI() {
   });
 
   document.getElementById("btnConnect").addEventListener("click", async () => {
-    const btn = document.getElementById("btnConnect");
     const cfg = parseFirebaseConfig(document.getElementById("firebaseConfig").value);
     const code = document.getElementById("syncCode").value.trim();
 
@@ -615,34 +846,53 @@ function initSettingsUI() {
       showConnectResult("error", "共有コードを入力してください（「コード生成」ボタンで作れます）。");
       return;
     }
+    await connectWith(cfg, code, document.getElementById("btnConnect"));
+  });
 
-    btn.disabled = true;
-    showConnectResult(null, "接続中です...");
-
-    const prev = { ...state.settings };
-    state.settings.firebaseConfig = cfg;
-    state.settings.syncCode = code;
-
-    const result = await connectCloud({ offerMigration: true });
-    btn.disabled = false;
-
-    if (result.ok) {
-      state.settings.syncMode = "cloud";
-      saveSettings();
-      // 読み取った設定を見やすい形で表示し直す
-      document.getElementById("firebaseConfig").value = JSON.stringify(cfg, null, 2);
-      showConnectResult("ok", `接続しました。共有コード「${code}」でクラウド同期中です。\nスマホなど他の端末でも、同じFirebase設定と同じ共有コードを入れて「保存して接続」を押してください。`);
-    } else {
-      // 失敗したら元の設定（この端末のみ等）に戻す
-      state.settings = prev;
-      saveSettings();
-      if (state.settings.syncMode !== "cloud") {
-        setSyncStatus("off", "この端末のみ");
-        loadLocalItems();
-        render();
-      }
-      showConnectResult("error", result.message);
+  // 接続用リンクを貼り付けて接続
+  document.getElementById("btnQuickConnect").addEventListener("click", async () => {
+    const input = document.getElementById("setupLinkInput");
+    const setup = parseSetupLink(input.value);
+    if (!setup) {
+      showConnectResult("error", "接続用リンクを読み取れませんでした。同期済みの端末で「リンクをコピー」したものを、最後まで全部貼り付けてください。");
+      return;
     }
+    const result = await connectWith(setup.config, setup.code, document.getElementById("btnQuickConnect"));
+    if (result.ok) input.value = "";
+  });
+
+  // 他の端末を追加する（接続用リンクとQRコード）
+  document.getElementById("btnShowShare").addEventListener("click", () => {
+    const link = buildSetupLink();
+    document.getElementById("setupLinkOutput").value = link;
+    const box = document.getElementById("qrBox");
+    try {
+      box.innerHTML = window.QRMini.toSvg(link, { ecl: "M", border: 4 });
+    } catch (e) {
+      console.error(e);
+      box.innerHTML = '<p class="qr-error">QRコードを作れませんでした。下のリンクをコピーして使ってください。</p>';
+    }
+    document.getElementById("sharePanel").hidden = false;
+    document.getElementById("btnShowShare").hidden = true;
+  });
+
+  document.getElementById("btnHideShare").addEventListener("click", hideSharePanel);
+
+  document.getElementById("btnCopyLink").addEventListener("click", async () => {
+    const out = document.getElementById("setupLinkOutput");
+    let copied = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(out.value);
+        copied = true;
+      }
+    } catch (e) { /* 下の方法で試す */ }
+    if (!copied) {
+      out.focus();
+      out.select();
+      try { copied = document.execCommand("copy"); } catch (e) { copied = false; }
+    }
+    showToast(copied ? "リンクをコピーしました" : "コピーできませんでした。リンクを長押しして選択・コピーしてください");
   });
 
   document.getElementById("btnAddCategory").addEventListener("click", () => {
@@ -650,16 +900,17 @@ function initSettingsUI() {
     const val = input.value.trim();
     if (!val) return;
     if (!state.settings.categories.includes(val)) {
-      state.settings.categories.push(val);
-      saveSettings();
+      state.settings.categories = [...state.settings.categories, val];
+      saveSharedSettings();
       render();
     }
     input.value = "";
   });
 
   document.getElementById("warnDays").addEventListener("change", (e) => {
-    state.settings.warnDays = Number(e.target.value) || 3;
-    saveSettings();
+    const v = Number(e.target.value);
+    state.settings.warnDays = Number.isFinite(v) && v >= 0 ? v : 3;
+    saveSharedSettings();
     render();
   });
 
@@ -721,6 +972,13 @@ function initGeneralUI() {
 }
 
 async function init() {
+  // 接続用リンクで開かれた場合は、共有コードがURLに残らないようすぐに消しておく
+  let setupHash = null;
+  if (location.hash.includes(SETUP_PARAM)) {
+    setupHash = location.hash;
+    history.replaceState(null, "", location.href.split("#")[0]);
+  }
+
   loadSettings();
   initGeneralUI();
   initSettingsUI();
@@ -730,6 +988,8 @@ async function init() {
     render();
     const result = await connectCloud();
     if (!result.ok) showToast(result.message);
+    else if (!result.sharedOk) showToast("カテゴリの同期には、Firestoreのルールの更新が必要です（設定タブ参照）");
+    if (result.ok && !result.sharedOk) showConnectResult("error", RULES_UPDATE_NOTE);
   } else {
     state.settings.syncMode = "local";
     loadLocalItems();
@@ -737,6 +997,17 @@ async function init() {
   }
 
   render();
+  updateShareCard();
+
+  if (setupHash) await handleSetupLinkOnLoad(setupHash);
+
+  // アプリを開いたままのタブで接続用リンクを開いた場合（ページは再読み込みされず # 以降だけが変わる）
+  window.addEventListener("hashchange", () => {
+    if (!location.hash.includes(SETUP_PARAM)) return;
+    const hash = location.hash;
+    history.replaceState(null, "", location.href.split("#")[0]);
+    handleSetupLinkOnLoad(hash);
+  });
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch((e) => console.warn("SW登録失敗", e));

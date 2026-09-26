@@ -89,6 +89,15 @@
       </div>
 
       <div class="card settings-card" id="cloudSettings" hidden>
+        <div class="quick-connect">
+          <h3>接続用リンクをお持ちの場合</h3>
+          <p class="hint">同期済みの端末で表示した「接続用リンク」を貼り付けて「接続」を押すと、下の2と3を入力しなくても接続できます。</p>
+          <div class="row-inline">
+            <input type="text" id="setupLinkInput" class="input quick-input" placeholder="https://...#setup=..." autocomplete="off">
+            <button class="btn btn-primary" id="btnQuickConnect">接続</button>
+          </div>
+        </div>
+
         <h3>2. Firebase 接続情報</h3>
         <p class="hint">Firebaseコンソールの「プロジェクトの設定」→「マイアプリ」に表示される <code>const firebaseConfig = { ... };</code> の部分を、コピーしたまま貼り付けてください（書き換えは不要です）。</p>
         <textarea id="firebaseConfig" class="input textarea" rows="8" placeholder="const firebaseConfig = {&#10;  apiKey: &quot;...&quot;,&#10;  authDomain: &quot;...&quot;,&#10;  projectId: &quot;...&quot;,&#10;  storageBucket: &quot;...&quot;,&#10;  messagingSenderId: &quot;...&quot;,&#10;  appId: &quot;...&quot;&#10;};"></textarea>
@@ -106,9 +115,25 @@
         <p id="connectResult" class="connect-result" hidden></p>
       </div>
 
+      <div class="card settings-card" id="shareCard" hidden>
+        <h3>他の端末を追加する</h3>
+        <p class="hint">新しいスマホやPCを同期に加えるための、接続用リンクとQRコードを表示します。新しい端末でQRコードを読み取るか、リンクを開くだけで接続できます。</p>
+        <button class="btn btn-secondary" id="btnShowShare">接続用リンクとQRコードを表示</button>
+        <div id="sharePanel" hidden>
+          <p class="share-warning">このリンクとQRコードには共有コードが含まれています。同期したい家族にだけ渡し、SNSなどには載せないでください。</p>
+          <div id="qrBox" class="qr-box" aria-label="接続用QRコード"></div>
+          <div class="row-inline">
+            <input type="text" id="setupLinkOutput" class="input quick-input" readonly>
+            <button class="btn btn-primary" id="btnCopyLink">リンクをコピー</button>
+          </div>
+          <p class="hint share-note">iPhoneで「ホーム画面に追加」したアプリを使う場合：QRコードをカメラで読むとSafariで開いてしまうため、リンクをコピーして、ホーム画面のアプリの「設定」→「接続用リンクをお持ちの場合」に貼り付けてください。</p>
+          <button class="btn btn-secondary" id="btnHideShare">閉じる</button>
+        </div>
+      </div>
+
       <div class="card settings-card">
         <h3>カテゴリ管理</h3>
-        <p class="hint">商品の分類に使うカテゴリです。自由に追加・削除できます。</p>
+        <p class="hint">商品の分類に使うカテゴリです。自由に追加・削除できます。クラウド同期中は、すべての端末で共通になります。</p>
         <div class="row-inline">
           <input type="text" id="newCategory" class="input" placeholder="新しいカテゴリ名">
           <button class="btn btn-secondary" id="btnAddCategory">追加</button>
@@ -118,6 +143,7 @@
 
       <div class="card settings-card">
         <h3>まもなくの判定基準</h3>
+        <p class="hint">クラウド同期中は、すべての端末で共通になります。</p>
         <div class="row-inline">
           <label for="warnDays">残り</label>
           <input type="number" id="warnDays" class="input" style="width:80px" min="0" max="30" value="3">
@@ -210,6 +236,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="qrcode.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

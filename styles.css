@@ -383,6 +383,38 @@ html, body {
 .connect-result.ok { background: var(--primary-soft); color: var(--primary-dark); }
 .connect-result.error { background: var(--danger-soft); color: var(--danger); }
 
+.quick-connect {
+  padding: 12px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+}
+.quick-connect .hint { margin-bottom: 10px; }
+.quick-input { flex: 1; min-width: 180px; font-size: 0.82rem; }
+
+#sharePanel { margin-top: 14px; }
+.share-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.qr-box {
+  width: 240px;
+  max-width: 100%;
+  margin: 0 auto 12px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+}
+.qr-box svg { width: 100%; height: auto; display: block; }
+.qr-box .qr-error { font-size: 0.8rem; color: var(--text-muted); padding: 12px; text-align: center; }
+.share-note { margin: 10px 0 12px; }
+
 .radio-row { display: flex; flex-direction: column; gap: 8px; }
 .radio-option { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
 
