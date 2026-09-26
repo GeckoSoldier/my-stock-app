@@ -36,7 +36,10 @@ function uid() {
 
 function todayStr() {
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function addDays(dateStr, days) {
@@ -65,6 +68,68 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// Firestore は undefined を保存できないため、JSON を経由して取り除く
+function sanitizeForCloud(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+/* ---------------------------- Firebase 設定の読み取り -------------------- */
+
+/**
+ * Firebaseコンソールからコピーした設定を読み取る。
+ * 次のどの形式で貼り付けても動くようにしている:
+ *   - JSON形式            {"apiKey": "...", "projectId": "..."}
+ *   - JavaScript形式      const firebaseConfig = { apiKey: "...", projectId: "..." };
+ *   - import文などを含むコード全体
+ */
+function parseFirebaseConfig(raw) {
+  const text = (raw || "").trim();
+  if (!text) return null;
+
+  try {
+    const obj = JSON.parse(text);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+  } catch (e) { /* JSON ではないので下の方法で読み取る */ }
+
+  const cfg = {};
+  const re = /["']?([A-Za-z_$][\w$]*)["']?\s*:\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`([^`]*)`)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const value = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+    cfg[m[1]] = value;
+  }
+  return Object.keys(cfg).length ? cfg : null;
+}
+
+const REQUIRED_CONFIG_KEYS = ["apiKey", "projectId", "appId"];
+
+function missingConfigKeys(cfg) {
+  return REQUIRED_CONFIG_KEYS.filter((k) => !cfg || !cfg[k]);
+}
+
+function describeFirebaseError(err) {
+  const code = (err && err.code) || "";
+  if (code.includes("operation-not-allowed") || code.includes("admin-restricted-operation")) {
+    return "匿名ログインが有効になっていません。Firebaseコンソールの「セキュリティ」→「Authentication」→「ログイン方法」で「匿名」をオンにしてください。";
+  }
+  if (code.includes("api-key-not-valid") || code.includes("invalid-api-key")) {
+    return "apiKey が正しくないようです。Firebaseの設定をもう一度コピーし直して貼り付けてください。";
+  }
+  if (code.includes("permission-denied")) {
+    return "Firestoreへのアクセスが拒否されました。Firestoreの「ルール」タブに、手順書のルールを貼り付けて「公開」したか確認してください。";
+  }
+  if (code.includes("not-found")) {
+    return "Firestoreのデータベースが見つかりません。データベースIDを「(default)」のまま作成したか確認してください。";
+  }
+  if (code.includes("network-request-failed") || code.includes("unavailable")) {
+    return "ネットワークに接続できませんでした。インターネット接続を確認して、もう一度お試しください。";
+  }
+  if (typeof firebase === "undefined") {
+    return "Firebaseの部品を読み込めませんでした。インターネット接続を確認して、ページを再読み込みしてください。";
+  }
+  return "接続できませんでした。（エラー: " + (code || (err && err.message) || "不明") + "）";
+}
+
 /* ---------------------------- Persistence ------------------------------- */
 
 function loadSettings() {
@@ -81,20 +146,24 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (e) { console.warn(e); }
 }
 
-function loadLocalItems() {
+function readLocalItems() {
   try {
     const raw = localStorage.getItem(LOCAL_ITEMS_KEY);
-    state.items = raw ? JSON.parse(raw) : [];
+    return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    state.items = [];
+    return [];
   }
 }
 
+function loadLocalItems() {
+  state.items = readLocalItems();
+}
+
 function saveLocalItems() {
-  localStorage.setItem(LOCAL_ITEMS_KEY, JSON.stringify(state.items));
+  try { localStorage.setItem(LOCAL_ITEMS_KEY, JSON.stringify(state.items)); } catch (e) { console.warn(e); }
 }
 
 /* ---------------------------- Cloud (Firestore) -------------------------- */
@@ -108,41 +177,79 @@ function setSyncStatus(mode, label) {
   lbl.textContent = label;
 }
 
-async function connectCloud() {
+function stopCloud() {
+  if (state.cloud.unsub) { state.cloud.unsub(); state.cloud.unsub = null; }
+  state.cloud.ready = false;
+}
+
+/**
+ * Firestore に接続する。
+ * 成功したら { ok: true }、失敗したら { ok: false, message } を返す。
+ * options.offerMigration が true のとき、クラウドが空でこの端末に商品があれば
+ * クラウドへコピーするか確認する（「保存して接続」を押したときのみ）。
+ */
+async function connectCloud(options = {}) {
   const cfg = state.settings.firebaseConfig;
   const code = (state.settings.syncCode || "").trim();
   if (!cfg || !code) {
     setSyncStatus("off", "未設定");
-    return;
+    return { ok: false, message: "Firebaseの設定と共有コードの両方を入力してください。" };
   }
   try {
-    if (state.cloud.unsub) { state.cloud.unsub(); state.cloud.unsub = null; }
-    if (!state.cloud.app) {
-      state.cloud.app = firebase.initializeApp(cfg);
+    if (typeof firebase === "undefined") throw new Error("firebase-sdk-not-loaded");
+
+    stopCloud();
+    // 設定を直して接続し直す場合に備え、前回の接続は一度破棄する
+    if (state.cloud.app) {
+      try { await state.cloud.app.delete(); } catch (e) { /* ignore */ }
+      state.cloud.app = null;
     }
-    const auth = firebase.auth();
-    await auth.signInAnonymously();
-    state.cloud.db = firebase.firestore();
+    state.cloud.app = firebase.initializeApp(cfg);
+    await state.cloud.app.auth().signInAnonymously();
+    state.cloud.db = state.cloud.app.firestore();
     const colRef = state.cloud.db.collection("households").doc(code).collection("items");
 
-    setSyncStatus("on", "同期中：" + code);
+    // 読み取りできるか（ルール・DBが正しいか）を最初に確認する
+    const firstSnap = await colRef.get();
+
+    if (options.offerMigration && firstSnap.empty) {
+      const localItems = readLocalItems();
+      if (localItems.length) {
+        const ok = confirm(
+          `この端末に登録済みの ${localItems.length} 件の商品を、クラウドにコピーしますか？\n` +
+          "（コピーすると、同じ共有コードを入れたスマホなど他の端末でも表示されます）"
+        );
+        if (ok) {
+          const batch = state.cloud.db.batch();
+          localItems.forEach((it) => {
+            const item = sanitizeForCloud({ ...it, id: it.id || uid() });
+            batch.set(colRef.doc(item.id), item);
+          });
+          await batch.commit();
+        }
+      }
+    }
 
     state.cloud.unsub = colRef.onSnapshot((snap) => {
       const items = [];
-      snap.forEach((doc) => items.push({ id: doc.id, ...doc.data() }));
+      snap.forEach((doc) => items.push({ ...doc.data(), id: doc.id }));
       items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       state.items = items;
       render();
     }, (err) => {
       console.error(err);
       setSyncStatus("error", "同期エラー");
+      showToast(describeFirebaseError(err));
     });
 
     state.cloud.ready = true;
+    setSyncStatus("on", "同期中：" + code);
+    return { ok: true };
   } catch (e) {
     console.error(e);
+    stopCloud();
     setSyncStatus("error", "接続失敗");
-    showToast("Firebaseへの接続に失敗しました。設定を確認してください。");
+    return { ok: false, message: describeFirebaseError(e) };
   }
 }
 
@@ -155,9 +262,13 @@ function cloudCollection() {
 
 async function upsertItem(item) {
   if (state.settings.syncMode === "cloud" && state.cloud.ready) {
-    const ref = cloudCollection().doc(item.id);
-    await ref.set(item, { merge: true });
-    // local state updates via onSnapshot
+    try {
+      await cloudCollection().doc(item.id).set(sanitizeForCloud(item), { merge: true });
+    } catch (e) {
+      console.error(e);
+      showToast(describeFirebaseError(e));
+    }
+    // 画面は onSnapshot 経由で更新される
   } else {
     const idx = state.items.findIndex((i) => i.id === item.id);
     if (idx >= 0) state.items[idx] = item; else state.items.push(item);
@@ -168,7 +279,12 @@ async function upsertItem(item) {
 
 async function deleteItemById(id) {
   if (state.settings.syncMode === "cloud" && state.cloud.ready) {
-    await cloudCollection().doc(id).delete();
+    try {
+      await cloudCollection().doc(id).delete();
+    } catch (e) {
+      console.error(e);
+      showToast(describeFirebaseError(e));
+    }
   } else {
     state.items = state.items.filter((i) => i.id !== id);
     saveLocalItems();
@@ -234,7 +350,7 @@ function itemCardHtml(item) {
   const cardClass = status === "due" ? "overdue" : (status === "soon" ? "urgent" : "");
 
   return `
-  <div class="item-card ${cardClass}" data-id="${item.id}">
+  <div class="item-card ${cardClass}" data-id="${escapeHtml(item.id)}">
     <div class="item-card-top">
       ${itemThumbHtml(item)}
       <div class="item-title-wrap">
@@ -244,12 +360,12 @@ function itemCardHtml(item) {
       <span class="status-badge ${status}">${statusLabel(status, daysLeft)}</span>
     </div>
     <div class="item-meta">
-      <span>前回: ${item.lastPurchased ? item.lastPurchased : "未記録"} ・ 周期: ${item.cycleDays || "-"}日</span>
+      <span>前回: ${item.lastPurchased ? escapeHtml(item.lastPurchased) : "未記録"} ・ 周期: ${escapeHtml(item.cycleDays || "-")}日</span>
       <span class="stock-pill ${stockClass}">残量: ${stockLabel}</span>
     </div>
     <div class="item-actions">
-      <button class="btn btn-primary" data-action="bought" data-id="${item.id}">買った（補充）</button>
-      <button class="btn btn-secondary" data-action="edit" data-id="${item.id}">編集</button>
+      <button class="btn btn-primary" data-action="bought" data-id="${escapeHtml(item.id)}">買った（補充）</button>
+      <button class="btn btn-secondary" data-action="edit" data-id="${escapeHtml(item.id)}">編集</button>
     </div>
   </div>`;
 }
@@ -277,9 +393,9 @@ function render() {
   const search = (document.getElementById("searchBox").value || "").trim().toLowerCase();
   const catFilter = document.getElementById("categoryFilter").value;
   let allItems = [...state.items];
-  if (search) allItems = allItems.filter((i) => i.name.toLowerCase().includes(search));
+  if (search) allItems = allItems.filter((i) => (i.name || "").toLowerCase().includes(search));
   if (catFilter && catFilter !== "__all__") allItems = allItems.filter((i) => i.category === catFilter);
-  allItems.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  allItems.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
 
   const allList = document.getElementById("allList");
   const allEmpty = document.getElementById("allEmpty");
@@ -300,7 +416,7 @@ function renderCategorySelects() {
   const filterVal = catFilter.value || "__all__";
   catFilter.innerHTML = `<option value="__all__">すべてのカテゴリ</option>` +
     cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-  catFilter.value = filterVal;
+  catFilter.value = cats.includes(filterVal) ? filterVal : "__all__";
 }
 
 function renderCategoryChips() {
@@ -421,7 +537,7 @@ async function handleItemFormSubmit(e) {
     stockLevel,
     memo: document.getElementById("itemMemo").value.trim(),
     history: existing ? existing.history || [] : [],
-    createdAt: existing ? existing.createdAt : Date.now(),
+    createdAt: existing && existing.createdAt ? existing.createdAt : Date.now(),
     updatedAt: Date.now()
   };
 
@@ -443,6 +559,13 @@ async function handleDeleteItem() {
 
 /* ---------------------------- Settings UI ----------------------------------- */
 
+function showConnectResult(kind, message) {
+  const el = document.getElementById("connectResult");
+  el.hidden = !message;
+  el.className = "connect-result" + (kind ? " " + kind : "");
+  el.textContent = message || "";
+}
+
 function initSettingsUI() {
   document.getElementById("modeLocal").checked = state.settings.syncMode === "local";
   document.getElementById("modeCloud").checked = state.settings.syncMode === "cloud";
@@ -454,46 +577,71 @@ function initSettingsUI() {
 
   document.querySelectorAll('input[name="syncMode"]').forEach((r) => {
     r.addEventListener("change", () => {
-      document.getElementById("cloudSettings").hidden = r.value !== "cloud" || !r.checked;
-      if (r.checked) {
-        state.settings.syncMode = r.value;
+      if (!r.checked) return;
+      document.getElementById("cloudSettings").hidden = r.value !== "cloud";
+      if (r.value === "local") {
+        state.settings.syncMode = "local";
         saveSettings();
-        if (r.value === "local") {
-          if (state.cloud.unsub) { state.cloud.unsub(); state.cloud.unsub = null; }
-          state.cloud.ready = false;
-          loadLocalItems();
-          setSyncStatus("off", "この端末のみ");
-          render();
-        }
+        stopCloud();
+        loadLocalItems();
+        setSyncStatus("off", "この端末のみ");
+        showConnectResult(null, "");
+        render();
       }
+      // 「クラウド同期する」は「保存して接続」が成功した時点で切り替える
     });
   });
 
   document.getElementById("btnGenCode").addEventListener("click", () => {
-    const code = "home-" + Math.random().toString(36).slice(2, 8);
-    document.getElementById("syncCode").value = code;
+    const rand = () => Math.random().toString(36).slice(2, 8);
+    document.getElementById("syncCode").value = `home-${rand()}-${rand()}`;
   });
 
   document.getElementById("btnConnect").addEventListener("click", async () => {
-    const resultEl = document.getElementById("connectResult");
-    try {
-      const raw = document.getElementById("firebaseConfig").value.trim();
-      const cfg = raw ? JSON.parse(raw) : null;
-      const code = document.getElementById("syncCode").value.trim();
-      if (!cfg || !code) {
-        resultEl.textContent = "Firebase設定と共有コードの両方を入力してください。";
-        return;
-      }
+    const btn = document.getElementById("btnConnect");
+    const cfg = parseFirebaseConfig(document.getElementById("firebaseConfig").value);
+    const code = document.getElementById("syncCode").value.trim();
+
+    if (!cfg) {
+      showConnectResult("error", "Firebaseの設定を読み取れませんでした。Firebaseコンソールに表示された「const firebaseConfig = { ... };」の部分をそのまま貼り付けてください。");
+      return;
+    }
+    const missing = missingConfigKeys(cfg);
+    if (missing.length) {
+      showConnectResult("error", `Firebaseの設定に次の項目が見つかりません：${missing.join("、")}\n「{」から「}」まで全部コピーできているか確認してください。`);
+      return;
+    }
+    if (!code) {
+      showConnectResult("error", "共有コードを入力してください（「コード生成」ボタンで作れます）。");
+      return;
+    }
+
+    btn.disabled = true;
+    showConnectResult(null, "接続中です...");
+
+    const prev = { ...state.settings };
+    state.settings.firebaseConfig = cfg;
+    state.settings.syncCode = code;
+
+    const result = await connectCloud({ offerMigration: true });
+    btn.disabled = false;
+
+    if (result.ok) {
       state.settings.syncMode = "cloud";
-      state.settings.firebaseConfig = cfg;
-      state.settings.syncCode = code;
       saveSettings();
-      resultEl.textContent = "接続中...";
-      await connectCloud();
-      resultEl.textContent = "接続しました。";
-    } catch (err) {
-      console.error(err);
-      resultEl.textContent = "JSONの形式が正しくない可能性があります。";
+      // 読み取った設定を見やすい形で表示し直す
+      document.getElementById("firebaseConfig").value = JSON.stringify(cfg, null, 2);
+      showConnectResult("ok", `接続しました。共有コード「${code}」でクラウド同期中です。\nスマホなど他の端末でも、同じFirebase設定と同じ共有コードを入れて「保存して接続」を押してください。`);
+    } else {
+      // 失敗したら元の設定（この端末のみ等）に戻す
+      state.settings = prev;
+      saveSettings();
+      if (state.settings.syncMode !== "cloud") {
+        setSyncStatus("off", "この端末のみ");
+        loadLocalItems();
+        render();
+      }
+      showConnectResult("error", result.message);
     }
   });
 
@@ -516,7 +664,7 @@ function initSettingsUI() {
   });
 
   document.getElementById("btnExport").addEventListener("click", () => {
-    const data = { settings: state.settings, items: state.items };
+    const data = { items: state.items, categories: state.settings.categories };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -579,8 +727,11 @@ async function init() {
 
   if (state.settings.syncMode === "cloud" && state.settings.firebaseConfig && state.settings.syncCode) {
     setSyncStatus("off", "接続中...");
-    await connectCloud();
+    render();
+    const result = await connectCloud();
+    if (!result.ok) showToast(result.message);
   } else {
+    state.settings.syncMode = "local";
     loadLocalItems();
     setSyncStatus("off", "この端末のみ");
   }

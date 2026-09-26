@@ -90,8 +90,8 @@
 
       <div class="card settings-card" id="cloudSettings" hidden>
         <h3>2. Firebase 接続情報</h3>
-        <p class="hint">無料のFirebaseプロジェクトを作成し、Firebase設定(JSON)を貼り付けてください。手順は同梱の「セットアップ手順書」をご覧ください。</p>
-        <textarea id="firebaseConfig" class="input textarea" rows="6" placeholder='{"apiKey":"...", "authDomain":"...", "projectId":"...", ...}'></textarea>
+        <p class="hint">Firebaseコンソールの「プロジェクトの設定」→「マイアプリ」に表示される <code>const firebaseConfig = { ... };</code> の部分を、コピーしたまま貼り付けてください（書き換えは不要です）。</p>
+        <textarea id="firebaseConfig" class="input textarea" rows="8" placeholder="const firebaseConfig = {&#10;  apiKey: &quot;...&quot;,&#10;  authDomain: &quot;...&quot;,&#10;  projectId: &quot;...&quot;,&#10;  storageBucket: &quot;...&quot;,&#10;  messagingSenderId: &quot;...&quot;,&#10;  appId: &quot;...&quot;&#10;};"></textarea>
 
         <h3>3. 共有コード（家族・世帯コード）</h3>
         <p class="hint">同じコードを入力した端末同士でデータが共有されます。長めのランダムな文字列を推奨します。</p>
@@ -102,8 +102,8 @@
 
         <div class="row-inline" style="margin-top:16px;">
           <button class="btn btn-primary" id="btnConnect">保存して接続</button>
-          <span id="connectResult" class="hint"></span>
         </div>
+        <p id="connectResult" class="connect-result" hidden></p>
       </div>
 
       <div class="card settings-card">

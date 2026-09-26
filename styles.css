@@ -136,6 +136,13 @@ html, body {
   line-height: 1.5;
 }
 
+.hint code {
+  font-size: 0.8rem;
+  background: var(--surface-alt);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 .filter-row {
   display: flex;
   gap: 8px;
@@ -312,6 +319,7 @@ html, body {
   transition: transform 0.05s ease;
 }
 .btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.6; cursor: wait; }
 
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-dark); }
@@ -360,6 +368,20 @@ html, body {
 }
 .card h3 { margin: 0 0 8px; font-size: 0.95rem; }
 .settings-card .hint { margin-bottom: 10px; }
+.settings-card textarea + h3 { margin-top: 16px; }
+
+.connect-result {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  background: var(--surface-alt);
+  color: var(--text);
+  white-space: pre-line;
+}
+.connect-result.ok { background: var(--primary-soft); color: var(--primary-dark); }
+.connect-result.error { background: var(--danger-soft); color: var(--danger); }
 
 .radio-row { display: flex; flex-direction: column; gap: 8px; }
 .radio-option { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; }
@@ -385,8 +407,6 @@ html, body {
   font-size: 0.8rem;
   padding: 2px 6px;
 }
-
-.danger-card { }
 
 /* ---------- Modal ---------- */
 .modal-overlay {
@@ -455,6 +475,7 @@ html, body {
 .image-preview[hidden] {
   display: none;
 }
+
 .image-preview img {
   max-width: 100%;
   max-height: 100%;
@@ -464,6 +485,8 @@ html, body {
   font-size: 0.8rem;
   color: var(--text-muted);
   font-weight: 400;
+  text-align: center;
+  padding: 0 12px;
 }
 
 .modal-actions {
