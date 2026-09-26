@@ -65,7 +65,7 @@ html, body {
   letter-spacing: 0.01em;
 }
 
-.brand-mark { font-size: 1.2rem; }
+.brand-mark { width: 30px; height: 30px; flex: none; display: block; }
 
 .sync-status {
   display: flex;
