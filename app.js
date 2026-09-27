@@ -31,7 +31,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.09.27-1";
+const APP_VERSION = "2026.09.27-3";
 
 const SETUP_PARAM = "setup=";
 
@@ -494,6 +494,12 @@ function stockInfo(item) {
   return { level: levelFromPct(pct), auto: true, pct };
 }
 
+// 並び替え用の残量。自動は推定％、手入力は段階の目安（なし0%・少ない15%・半分程度47%）
+function remainingSortKey(info) {
+  if (info.auto && info.pct !== null) return info.pct;
+  return { none: 0, low: 15, half: 47, full: 100 }[info.level] ?? 100;
+}
+
 function computeStatus(item) {
   const warnDays = getWarnDays();
   let daysLeft = null;
@@ -609,11 +615,16 @@ function render() {
   todayList.innerHTML = todayItems.map((x) => itemCardHtml(x.item)).join("");
   todayEmpty.hidden = todayItems.length > 0;
 
-  // HALF list（「今買うもの」に入っているものは除く）
+  // 「半分以下」リスト：残量が半分程度・少ない・なし（推定残量65%以下）の商品を、残りが少ない順に。
+  // ただし「今買うもの」に出ている商品は重ならないよう除く
   const halfItems = state.items
     .map((i) => ({ item: i, ...computeStatus(i), info: stockInfo(i) }))
-    .filter((x) => x.status === "ok" && x.info.level === "half")
-    .sort((a, b) => (a.info.pct ?? 999) - (b.info.pct ?? 999));
+    .filter((x) => x.status === "ok" && ["half", "low", "none"].includes(x.info.level))
+    .sort((a, b) => {
+      const d = remainingSortKey(a.info) - remainingSortKey(b.info);
+      if (d !== 0) return d;
+      return (a.daysLeft ?? 999) - (b.daysLeft ?? 999); // 同じ残量なら期限が近い（過ぎている）順
+    });
   document.getElementById("halfList").innerHTML = halfItems.map((x) => itemCardHtml(x.item)).join("");
   document.getElementById("halfEmpty").hidden = halfItems.length > 0;
 

@@ -10,7 +10,7 @@
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2026.09.27-1">
+<link rel="stylesheet" href="styles.css?v=2026.09.27-3">
 </head>
 <body>
 
@@ -30,7 +30,7 @@
     </div>
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="today">今買うもの</button>
-      <button class="tab" data-tab="half">半分程度</button>
+      <button class="tab" data-tab="half">半分以下</button>
       <button class="tab" data-tab="all">すべての商品</button>
       <button class="tab" data-tab="settings">設定</button>
     </nav>
@@ -53,12 +53,12 @@
     <!-- HALF VIEW -->
     <section class="panel" id="panel-half" hidden>
       <div class="panel-head">
-        <h2>半分程度</h2>
-        <p class="hint">残量が半分程度（推定残量65〜30%）の商品です。残りが少ない順に並んでいます。次の買い物の候補にどうぞ。</p>
+        <h2>半分以下</h2>
+        <p class="hint">残量が半分以下（推定残量65%以下）で、まだ「今買うもの」には入っていない商品です。残りが少ない順に並んでいます。次の買い物の候補にどうぞ。</p>
       </div>
       <div id="halfList" class="item-list"></div>
       <div id="halfEmpty" class="empty-state" hidden>
-        <p>残量が半分程度の商品はありません。</p>
+        <p>残量が半分以下の商品はありません。</p>
       </div>
     </section>
 
@@ -298,7 +298,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="qrcode.js?v=2026.09.27-1"></script>
-<script src="app.js?v=2026.09.27-1"></script>
+<script src="qrcode.js?v=2026.09.27-3"></script>
+<script src="app.js?v=2026.09.27-3"></script>
 </body>
 </html>

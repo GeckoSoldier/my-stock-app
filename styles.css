@@ -277,6 +277,8 @@ html, body {
 
 .item-meta {
   display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   justify-content: space-between;
   align-items: center;
   font-size: 0.82rem;
@@ -646,3 +648,6 @@ button.item-thumb-wrap {
 /* リマインド */
 .time-input { width: 130px; }
 .reminder-buttons { margin: 14px 0 10px; }
+
+/* 狭い画面で「周期: 60日」や残量表示が途中で折り返さないように（入りきらないときは行ごと下へ） */
+.item-meta > span { white-space: nowrap; }
