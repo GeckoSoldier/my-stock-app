@@ -31,7 +31,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.09.27-3";
+const APP_VERSION = "2026.10.02-1";
 
 const SETUP_PARAM = "setup=";
 
@@ -74,6 +74,103 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
+}
+
+/* ---------------------------- 安全対策：データの検査と整形 ------------------- */
+// インポートしたファイル・同期で届いたデータ・端末に保存されたデータは、
+// 書き換えられている可能性があるものとして、使う前に決まった形に整える。
+
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const STOCK_VALUES = ["auto", "full", "half", "low", "none"];
+const MAX_IMAGE_DATA = 400000;      // 写真（縮小後）の上限：約400KB
+const MAX_IMPORT_ITEMS = 2000;
+const MAX_IMPORT_BYTES = 30 * 1024 * 1024;
+
+function cleanStr(v, max) {
+  if (typeof v === "string") return v.slice(0, max);
+  if (typeof v === "number" && Number.isFinite(v)) return String(v).slice(0, max);
+  return "";
+}
+
+// http / https のURLだけを通す（javascript: などのURLは空にする）
+function safeHttpUrl(u) {
+  const t = cleanStr(u, 2000).trim();
+  if (!t) return "";
+  try {
+    const url = new URL(t, location.href);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+// アップロードした写真は「このアプリが作った形式」（画像のdata URL）だけを通す。
+// 外部URLを入れられると、一覧を開いただけで外部に通信が発生してしまうため。
+function safeImageData(d) {
+  return typeof d === "string" && d.length <= MAX_IMAGE_DATA &&
+    /^data:image\/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(d) ? d : "";
+}
+
+// 「画像のURL」欄に入れてよいもの：http/https のURL、または画像そのもののデータ（data:image/...）
+function safeImageUrl(u) {
+  return safeHttpUrl(u) || safeImageData(typeof u === "string" ? u.trim() : u);
+}
+
+function cleanDate(v) {
+  return typeof v === "string" && DATE_RE.test(v) ? v : null;
+}
+
+/**
+ * 商品データを決まった形にそろえる。おかしな値は捨てる／初期値に戻す。
+ * keepId: 同期データのように、ID が保存場所の名前として決まっている場合に true
+ */
+function sanitizeItem(raw, keepId) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  let id = typeof raw.id === "string" ? raw.id : "";
+  if (!keepId && !ID_RE.test(id)) id = uid();
+  if (!id) return null;
+  const cycle = Math.round(Number(raw.cycleDays));
+  const item = {
+    id,
+    name: cleanStr(raw.name, 100).trim() || "（名前なし）",
+    category: cleanStr(raw.category, 50),
+    cycleDays: Number.isFinite(cycle) && cycle >= 1 ? Math.min(cycle, 3650) : 30,
+    lastPurchased: cleanDate(raw.lastPurchased),
+    stockLevel: STOCK_VALUES.includes(raw.stockLevel) ? raw.stockLevel : "auto",
+    imageSource: raw.imageSource === "upload" ? "upload" : "url",
+    imageUrl: safeImageUrl(raw.imageUrl),
+    imageData: safeImageData(raw.imageData),
+    memo: cleanStr(raw.memo, 500),
+    history: Array.from(new Set((Array.isArray(raw.history) ? raw.history : []).map(cleanDate).filter(Boolean))).sort().slice(-10),
+    createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : 0,
+    updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : 0
+  };
+  if (raw.stockV === 2) item.stockV = 2; // 旧データの判定に使う
+  return item;
+}
+
+function sanitizeItems(list, keepId) {
+  return (Array.isArray(list) ? list : []).map((x) => sanitizeItem(x, keepId)).filter(Boolean);
+}
+
+function sanitizeCategories(list) {
+  const cats = Array.from(new Set((Array.isArray(list) ? list : []).map((c) => cleanStr(c, 50).trim()).filter(Boolean))).slice(0, 50);
+  return cats.length ? cats : [...DEFAULT_CATEGORIES];
+}
+
+// 共有コード：「/」や空白を含まない4〜100文字（保存場所の名前として安全な文字だけ）
+function isValidSyncCode(code) {
+  return typeof code === "string" && /^[^\/\s]{4,100}$/.test(code) && !/^__.*__$/.test(code) && code !== "." && code !== "..";
+}
+
+// Firebase の接続情報として形がおかしくないか（接続用リンク・貼り付けの両方で使う）
+function isPlausibleFirebaseConfig(cfg) {
+  return !!cfg &&
+    /^[A-Za-z0-9_-]{20,80}$/.test(cfg.apiKey || "") &&
+    /^[a-z0-9-]{4,40}$/.test(cfg.projectId || "") &&
+    /^[A-Za-z0-9:._-]{5,120}$/.test(cfg.appId || "") &&
+    (!cfg.authDomain || /^[a-z0-9.-]{4,120}$/i.test(cfg.authDomain));
 }
 
 // Firestore は undefined を保存できないため、JSON を経由して取り除く
@@ -122,16 +219,16 @@ function parseSetupLink(text) {
   const token = (idx >= 0 ? t.slice(idx + SETUP_PARAM.length) : t).split(/[&\s]/)[0];
   try {
     const obj = JSON.parse(base64UrlDecode(token));
-    if (!obj || !obj.a || !obj.p || !obj.i || !obj.k) return null;
-    return {
-      config: {
-        apiKey: obj.a,
-        authDomain: obj.d || `${obj.p}.firebaseapp.com`,
-        projectId: obj.p,
-        appId: obj.i
-      },
-      code: String(obj.k)
+    if (!obj || typeof obj !== "object") return null;
+    const config = {
+      apiKey: String(obj.a || ""),
+      authDomain: obj.d ? String(obj.d) : `${obj.p}.firebaseapp.com`,
+      projectId: String(obj.p || ""),
+      appId: String(obj.i || "")
     };
+    const code = String(obj.k || "");
+    if (!isPlausibleFirebaseConfig(config) || !isValidSyncCode(code)) return null;
+    return { config, code };
   } catch (e) {
     return null;
   }
@@ -202,9 +299,7 @@ function loadSettings() {
     if (raw) {
       const parsed = JSON.parse(raw);
       state.settings = { ...state.settings, ...parsed };
-      if (!state.settings.categories || !state.settings.categories.length) {
-        state.settings.categories = [...DEFAULT_CATEGORIES];
-      }
+      state.settings.categories = sanitizeCategories(state.settings.categories);
     }
   } catch (e) { console.warn("settings load failed", e); }
 }
@@ -223,7 +318,7 @@ function readLocalItems() {
 }
 
 function loadLocalItems() {
-  state.items = readLocalItems();
+  state.items = sanitizeItems(readLocalItems(), false);
 }
 
 function saveLocalItems() {
@@ -262,8 +357,8 @@ function metaRef(code) {
 // クラウドから届いた共有設定（カテゴリ・判定日数）をこの端末に反映する
 function applySharedSettings(data) {
   if (!data) return;
-  if (Array.isArray(data.categories)) state.settings.categories = data.categories.slice();
-  if (typeof data.warnDays === "number") {
+  if (Array.isArray(data.categories)) state.settings.categories = sanitizeCategories(data.categories);
+  if (typeof data.warnDays === "number" && Number.isFinite(data.warnDays) && data.warnDays >= 0 && data.warnDays <= 365) {
     state.settings.warnDays = data.warnDays;
     document.getElementById("warnDays").value = data.warnDays;
   }
@@ -388,7 +483,10 @@ async function connectCloud(options = {}) {
 
     state.cloud.unsub = colRef.onSnapshot((snap) => {
       const items = [];
-      snap.forEach((doc) => items.push({ ...doc.data(), id: doc.id }));
+      snap.forEach((doc) => {
+        const it = sanitizeItem({ ...doc.data(), id: doc.id }, true);
+        if (it) items.push(it);
+      });
       items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
       state.items = items;
       render();
@@ -467,7 +565,7 @@ function stockMode(item) {
   const lv = item.stockLevel;
   if (!lv || lv === "auto") return "auto";
   if (!item.stockV && lv === "full") return "auto";
-  return STOCK_LABELS[lv] ? lv : "auto";
+  return Object.prototype.hasOwnProperty.call(STOCK_LABELS, lv) ? lv : "auto";
 }
 
 // 推定残量（％、整数）。前回購入日からの経過日数を購入サイクルで割って計算する。
@@ -543,24 +641,32 @@ function itemImageSource(item) {
   return item.imageSource === "upload" ? "upload" : "url";
 }
 
+// 拡大表示できる写真（アップロード写真、またはURL欄に入れた画像データ）
+function itemPhotoSrc(item) {
+  if (itemImageSource(item) === "upload") return safeImageData(item.imageData);
+  return safeImageData(typeof item.imageUrl === "string" ? item.imageUrl.trim() : "");
+}
+
 function itemThumbHtml(item) {
   const fallbackEmoji = "🧺";
   const source = itemImageSource(item);
-  if (source === "upload" && item.imageData) {
+  const photo = itemPhotoSrc(item);
+  if (photo) {
     return `
     <button type="button" class="item-thumb-wrap item-thumb-photo" data-action="photo" data-id="${escapeHtml(item.id)}" title="写真を大きく表示" aria-label="写真を大きく表示">
       <span class="item-thumb-fallback">${fallbackEmoji}</span>
-      <img class="item-thumb-img" src="${escapeHtml(item.imageData)}" alt="" onerror="this.style.display='none'">
+      <img class="item-thumb-img" src="${escapeHtml(photo)}" alt="">
     </button>`;
   }
-  const url = source === "url" && item.imageUrl ? escapeHtml(item.imageUrl) : "";
+  const safeUrl = source === "url" ? safeHttpUrl(item.imageUrl) : "";
+  const url = safeUrl ? escapeHtml(safeUrl) : "";
   if (!url) {
     return `<span class="item-thumb-wrap item-thumb-empty" title="画像未登録"><span class="item-thumb-fallback">${fallbackEmoji}</span></span>`;
   }
   return `
-    <a class="item-thumb-wrap" href="${url}" target="_blank" rel="noopener noreferrer" title="クリックでこのURLを開く" onclick="event.stopPropagation()">
+    <a class="item-thumb-wrap item-thumb-link" href="${url}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" title="クリックでこのURLを開く">
       <span class="item-thumb-fallback">${fallbackEmoji}</span>
-      <img class="item-thumb-img" src="${url}" alt="" loading="lazy" onerror="this.style.display='none'">
+      <img class="item-thumb-img" src="${url}" alt="" loading="lazy" referrerpolicy="no-referrer">
       <span class="item-thumb-link-badge">↗</span>
     </a>`;
 }
@@ -684,6 +790,9 @@ function attachCardHandlers() {
       openEditModal(card.getAttribute("data-id"));
     });
   });
+  document.querySelectorAll("a.item-thumb-link").forEach((a) => {
+    a.addEventListener("click", (e) => e.stopPropagation());
+  });
   document.querySelectorAll('[data-action="photo"]').forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -755,7 +864,16 @@ function updateImagePreview() {
   const img = document.getElementById("imagePreviewImg");
   const fallback = document.getElementById("imagePreviewFallback");
   const upload = checkedImageSource() === "upload";
-  const src = upload ? modalImageData : document.getElementById("itemImageUrl").value.trim();
+  const raw = document.getElementById("itemImageUrl").value.trim();
+  const src = upload ? safeImageData(modalImageData) : safeImageUrl(raw);
+  if (!upload && raw && !src) {
+    wrap.hidden = false;
+    img.hidden = true;
+    fallback.hidden = false;
+    fallback.textContent = "「http://」か「https://」で始まる画像のURLを入れてください。";
+    return;
+  }
+  fallback.innerHTML = "この画像は読み込めませんでした。<br>ページのURLではなく「画像そのもの」のURLか確認してください。";
   if (!src) { wrap.hidden = true; return; }
   wrap.hidden = false;
   fallback.hidden = true;
@@ -820,7 +938,9 @@ async function handlePhotoSelected(e) {
 }
 
 function openPhotoViewer(item) {
-  document.getElementById("photoViewerImg").src = item.imageData;
+  const photo = itemPhotoSrc(item);
+  if (!photo) return;
+  document.getElementById("photoViewerImg").src = photo;
   document.getElementById("photoViewerCaption").textContent = item.name || "";
   document.getElementById("photoViewer").hidden = false;
 }
@@ -967,8 +1087,8 @@ async function handleItemFormSubmit(e) {
     id,
     name: document.getElementById("itemName").value.trim(),
     imageSource: checkedImageSource(),
-    imageUrl: document.getElementById("itemImageUrl").value.trim(),
-    imageData: modalImageData || "",
+    imageUrl: safeImageUrl(document.getElementById("itemImageUrl").value),
+    imageData: safeImageData(modalImageData),
     category: document.getElementById("itemCategory").value,
     cycleDays: Number(document.getElementById("itemCycle").value) || 30,
     lastPurchased,
@@ -981,6 +1101,13 @@ async function handleItemFormSubmit(e) {
   };
 
   if (!item.name) return;
+  const rawUrl = document.getElementById("itemImageUrl").value.trim();
+  if (item.imageSource === "url" && rawUrl && !item.imageUrl) {
+    showToast("画像のURLは「http://」か「https://」で始まるものだけ使えます");
+    return;
+  }
+  item.name = item.name.slice(0, 100);
+  item.memo = item.memo.slice(0, 500);
 
   // 保存できなかったときは画面を閉じない（入力した内容を失わないように）
   if (!(await upsertItem(item))) return;
@@ -1149,7 +1276,7 @@ function updateShareCard() {
  * 指定したFirebase設定と共有コードでクラウド同期に接続する。
  * 「保存して接続」「接続用リンク」の両方から使う。
  */
-async function connectWith(cfg, code, button) {
+async function connectWith(cfg, code, button, options = {}) {
   if (button) button.disabled = true;
   showConnectResult(null, "接続中です...");
 
@@ -1157,7 +1284,9 @@ async function connectWith(cfg, code, button) {
   state.settings.firebaseConfig = cfg;
   state.settings.syncCode = code;
 
-  const result = await connectCloud({ offerMigration: true });
+  // 接続用リンクから接続するときは、この端末のデータを自動でコピーする提案はしない
+  // （知らない人のリンクだった場合に、データを相手側へ送ってしまわないように）
+  const result = await connectCloud({ offerMigration: !!options.offerMigration });
   if (button) button.disabled = false;
 
   if (result.ok) {
@@ -1200,9 +1329,12 @@ async function handleSetupLinkOnLoad(hash) {
     showToast("この端末はすでに同期中です");
     return;
   }
+  const switching = cur.syncMode === "cloud" && cur.firebaseConfig &&
+    (cur.syncCode !== setup.code || cur.firebaseConfig.projectId !== setup.config.projectId);
   const ok = confirm(
     "この端末をクラウド同期に接続しますか？\n\n" +
     `Firebaseプロジェクト：${setup.config.projectId}\n共有コード：${setup.code}\n\n` +
+    (switching ? `【注意】いま同期中の場所（共有コード「${cur.syncCode}」）から切り替わります。\n\n` : "") +
     "心当たりのないリンクの場合は「キャンセル」を押してください。"
   );
   if (!ok) return;
@@ -1240,8 +1372,12 @@ function initSettingsUI() {
   });
 
   document.getElementById("btnGenCode").addEventListener("click", () => {
-    const rand = () => Math.random().toString(36).slice(2, 8);
-    document.getElementById("syncCode").value = `home-${rand()}-${rand()}`;
+    // 共有コードは合言葉の役割なので、推測されにくい安全な乱数で作る（約80ビット）
+    const chars = "abcdefghijkmnpqrstuvwxyz23456789"; // 見間違えやすい l, o, 0, 1 は除く
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const body = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+    document.getElementById("syncCode").value = `home-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}`;
   });
 
   document.getElementById("btnConnect").addEventListener("click", async () => {
@@ -1261,7 +1397,15 @@ function initSettingsUI() {
       showConnectResult("error", "共有コードを入力してください（「コード生成」ボタンで作れます）。");
       return;
     }
-    await connectWith(cfg, code, document.getElementById("btnConnect"));
+    if (!isValidSyncCode(code)) {
+      showConnectResult("error", "共有コードは「/」や空白を含まない4文字以上にしてください（「コード生成」ボタンで作るのがおすすめです）。");
+      return;
+    }
+    if (!isPlausibleFirebaseConfig(cfg)) {
+      showConnectResult("error", "Firebaseの設定の中身が正しくないようです。Firebaseコンソールからもう一度コピーしてください。");
+      return;
+    }
+    await connectWith(cfg, code, document.getElementById("btnConnect"), { offerMigration: true });
   });
 
   // 接続用リンクを貼り付けて接続
@@ -1348,14 +1492,22 @@ function initSettingsUI() {
     const file = e.target.files[0];
     if (!file) return;
     try {
+      if (file.size > MAX_IMPORT_BYTES) {
+        showToast("ファイルが大きすぎます（30MBまで）");
+        e.target.value = "";
+        return;
+      }
       const text = await file.text();
       const data = JSON.parse(text);
-      if (Array.isArray(data.items)) {
-        for (const item of data.items) {
-          if (!item.id) item.id = uid();
-          await upsertItem(item);
+      if (!data || !Array.isArray(data.items)) {
+        showToast("このアプリのデータファイルではないようです");
+      } else {
+        const items = sanitizeItems(data.items.slice(0, MAX_IMPORT_ITEMS), false);
+        let ok = 0;
+        for (const item of items) {
+          if (await upsertItem(item)) ok++;
         }
-        showToast(`${data.items.length}件のデータを取り込みました`);
+        showToast(`${ok}件のデータを取り込みました`);
       }
     } catch (err) {
       console.error(err);
@@ -1393,6 +1545,13 @@ function initGeneralUI() {
   });
   document.querySelectorAll('input[name="stockLevel"]').forEach((r) => r.addEventListener("change", updateStockEstimate));
   document.getElementById("btnApplyAvg").addEventListener("click", applyAverageCycle);
+
+  ["todayList", "halfList", "allList"].forEach((id) => {
+    document.getElementById(id).addEventListener("error", (e) => {
+      const t = e.target;
+      if (t && t.classList && t.classList.contains("item-thumb-img")) t.style.display = "none";
+    }, true);
+  });
 
   document.getElementById("searchBox").addEventListener("input", render);
   document.getElementById("categoryFilter").addEventListener("change", render);
