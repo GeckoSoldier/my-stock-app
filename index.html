@@ -13,7 +13,7 @@
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="48x48" href="icons/favicon-48.png">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="styles.css?v=2026.10.02-1">
+<link rel="stylesheet" href="styles.css?v=2026.10.02-2">
 </head>
 <body>
 
@@ -158,6 +158,16 @@
         <div id="categoryChips" class="chip-list"></div>
       </div>
 
+      <div class="card settings-card">
+        <h3>場所・店の管理</h3>
+        <p class="hint">商品を買う場所やお店です（例：スーパー、ドラッグストア、ネット通販）。自由に追加・削除できます。クラウド同期中は、すべての端末で共通になります。</p>
+        <div class="row-inline">
+          <input type="text" id="newStore" class="input" placeholder="新しい場所・店の名前" maxlength="50">
+          <button class="btn btn-secondary" id="btnAddStore">追加</button>
+        </div>
+        <div id="storeChips" class="chip-list"></div>
+      </div>
+
       <div class="card settings-card" id="reminderCard">
         <h3>リマインド（カレンダーで毎日お知らせ）</h3>
         <p class="hint">毎日決まった時刻に「今買うもの」を確認する予定を、カレンダーに登録します。予定の通知や予定の中のリンクから、アプリの「今買うもの」を直接開けます。</p>
@@ -242,6 +252,11 @@
         </label>
 
         <label class="field">
+          <span>場所・店</span>
+          <select id="itemStore" class="input select"></select>
+        </label>
+
+        <label class="field">
           <span>購入サイクル（日数） <span class="required">*</span></span>
           <input type="number" id="itemCycle" class="input" min="1" required placeholder="例：30">
         </label>
@@ -301,7 +316,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="qrcode.js?v=2026.10.02-1"></script>
-<script src="app.js?v=2026.10.02-1"></script>
+<script src="qrcode.js?v=2026.10.02-2"></script>
+<script src="app.js?v=2026.10.02-2"></script>
 </body>
 </html>

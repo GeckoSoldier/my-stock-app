@@ -6,6 +6,7 @@
    ========================================================================== */
 
 const DEFAULT_CATEGORIES = ["キッチン", "バス・トイレ", "洗濯", "衛生用品", "掃除", "その他"];
+const DEFAULT_STORES = ["スーパー", "ドラッグストア", "ネット通販", "100円ショップ"];
 const SETTINGS_KEY = "dsm_settings_v1";
 const LOCAL_ITEMS_KEY = "dsm_items_local_v1";
 
@@ -15,6 +16,7 @@ const state = {
     syncMode: "local",       // "local" | "cloud"
     warnDays: 3,
     categories: [...DEFAULT_CATEGORIES],
+    stores: [...DEFAULT_STORES],
     firebaseConfig: null,
     syncCode: "",
     mergedCodes: []          // この端末のカテゴリをクラウドと統合済みの共有コード
@@ -31,7 +33,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.10.02-1";
+const APP_VERSION = "2026.10.02-2";
 
 const SETUP_PARAM = "setup=";
 
@@ -135,6 +137,7 @@ function sanitizeItem(raw, keepId) {
     id,
     name: cleanStr(raw.name, 100).trim() || "（名前なし）",
     category: cleanStr(raw.category, 50),
+    store: cleanStr(raw.store, 50).trim(),
     cycleDays: Number.isFinite(cycle) && cycle >= 1 ? Math.min(cycle, 3650) : 30,
     lastPurchased: cleanDate(raw.lastPurchased),
     stockLevel: STOCK_VALUES.includes(raw.stockLevel) ? raw.stockLevel : "auto",
@@ -152,6 +155,12 @@ function sanitizeItem(raw, keepId) {
 
 function sanitizeItems(list, keepId) {
   return (Array.isArray(list) ? list : []).map((x) => sanitizeItem(x, keepId)).filter(Boolean);
+}
+
+// 場所・店：未登録（空）でもよい。配列でなければ（古いデータ）初期値を使う
+function sanitizeStores(list) {
+  if (!Array.isArray(list)) return [...DEFAULT_STORES];
+  return Array.from(new Set(list.map((c) => cleanStr(c, 50).trim()).filter(Boolean))).slice(0, 50);
 }
 
 function sanitizeCategories(list) {
@@ -300,6 +309,7 @@ function loadSettings() {
       const parsed = JSON.parse(raw);
       state.settings = { ...state.settings, ...parsed };
       state.settings.categories = sanitizeCategories(state.settings.categories);
+      state.settings.stores = sanitizeStores(parsed.stores);
     }
   } catch (e) { console.warn("settings load failed", e); }
 }
@@ -358,6 +368,7 @@ function metaRef(code) {
 function applySharedSettings(data) {
   if (!data) return;
   if (Array.isArray(data.categories)) state.settings.categories = sanitizeCategories(data.categories);
+  if (Array.isArray(data.stores)) state.settings.stores = sanitizeStores(data.stores);
   if (typeof data.warnDays === "number" && Number.isFinite(data.warnDays) && data.warnDays >= 0 && data.warnDays <= 365) {
     state.settings.warnDays = data.warnDays;
     document.getElementById("warnDays").value = data.warnDays;
@@ -379,18 +390,28 @@ async function setupSharedSettings(code) {
   try {
     const snap = await ref.get();
     const localCats = state.settings.categories || [];
+    const localStores = state.settings.stores || [];
     const localWarn = getWarnDays();
     const alreadyMerged = (state.settings.mergedCodes || []).includes(code);
 
     if (!snap.exists) {
-      await ref.set(sanitizeForCloud({ categories: localCats, warnDays: localWarn, updatedAt: Date.now() }));
+      await ref.set(sanitizeForCloud({ categories: localCats, stores: localStores, warnDays: localWarn, updatedAt: Date.now() }));
     } else if (!alreadyMerged) {
       const cloud = snap.data() || {};
       const cloudCats = Array.isArray(cloud.categories) ? cloud.categories : [];
       const union = cloudCats.concat(localCats.filter((c) => !cloudCats.includes(c)));
       const cloudWarn = typeof cloud.warnDays === "number" ? cloud.warnDays : localWarn;
-      if (union.length !== cloudCats.length || typeof cloud.warnDays !== "number") {
-        await ref.set(sanitizeForCloud({ categories: union, warnDays: cloudWarn, updatedAt: Date.now() }), { merge: true });
+      const cloudStores = Array.isArray(cloud.stores) ? cloud.stores : [];
+      const storeUnion = cloudStores.concat(localStores.filter((c) => !cloudStores.includes(c)));
+      if (union.length !== cloudCats.length || typeof cloud.warnDays !== "number" ||
+          !Array.isArray(cloud.stores) || storeUnion.length !== cloudStores.length) {
+        await ref.set(sanitizeForCloud({ categories: union, stores: storeUnion, warnDays: cloudWarn, updatedAt: Date.now() }), { merge: true });
+      }
+    } else {
+      // 「場所・店」が入る前から同期している場合：クラウドにまだ無ければ、この端末の一覧を共有する
+      const cloud = snap.data() || {};
+      if (!Array.isArray(cloud.stores)) {
+        await ref.set(sanitizeForCloud({ stores: localStores, updatedAt: Date.now() }), { merge: true });
       }
     }
 
@@ -419,6 +440,7 @@ function saveSharedSettings() {
     const code = (state.settings.syncCode || "").trim();
     metaRef(code).set(sanitizeForCloud({
       categories: state.settings.categories,
+      stores: state.settings.stores,
       warnDays: getWarnDays(),
       updatedAt: Date.now()
     }), { merge: true }).catch((e) => {
@@ -688,6 +710,7 @@ function itemCardHtml(item) {
       <div class="item-title-wrap">
         <div class="item-name">${escapeHtml(item.name)}</div>
         ${item.category ? `<span class="item-category">${escapeHtml(item.category)}</span>` : ""}
+        ${item.store ? `<div class="item-store" title="買う場所・店">🏪 ${escapeHtml(item.store)}</div>` : ""}
       </div>
       <span class="status-badge ${status}">${statusLabel(status, daysLeft)}</span>
     </div>
@@ -705,6 +728,8 @@ function itemCardHtml(item) {
 function render() {
   renderCategorySelects();
   renderCategoryChips();
+  renderStoreChips();
+  if (document.getElementById("itemModalOverlay").hidden) renderStoreSelect();
 
   // TODAY list
   const todayItems = state.items
@@ -762,6 +787,33 @@ function renderCategorySelects() {
   catFilter.innerHTML = `<option value="__all__">すべてのカテゴリ</option>` +
     cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
   catFilter.value = cats.includes(filterVal) ? filterVal : "__all__";
+}
+
+function renderStoreSelect(current) {
+  const sel = document.getElementById("itemStore");
+  const value = current !== undefined ? current : sel.value;
+  const stores = state.settings.stores || [];
+  // 設定から消した店でも、その商品に登録済みなら選択肢に残す（知らないうちに消えないように）
+  const options = value && !stores.includes(value) ? [...stores, value] : stores;
+  sel.innerHTML = `<option value="">（未設定）</option>` +
+    options.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  sel.value = value || "";
+}
+
+function renderStoreChips() {
+  const wrap = document.getElementById("storeChips");
+  const stores = state.settings.stores || [];
+  wrap.innerHTML = stores.length
+    ? stores.map((c) => `<span class="chip">${escapeHtml(c)}<button data-store="${escapeHtml(c)}" title="削除" aria-label="${escapeHtml(c)} を削除">✕</button></span>`).join("")
+    : `<p class="hint">まだ登録されていません。</p>`;
+  wrap.querySelectorAll("button[data-store]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const name = btn.getAttribute("data-store");
+      state.settings.stores = (state.settings.stores || []).filter((c) => c !== name);
+      saveSharedSettings();
+      render();
+    });
+  });
 }
 
 function renderCategoryChips() {
@@ -1044,6 +1096,7 @@ function openAddModal() {
   modalHistory = [];
   modalImageData = "";
   setImageSource("upload");
+  renderStoreSelect("");
   renderCategorySelects();
   renderPurchaseHistory();
   updateStockEstimate();
@@ -1059,6 +1112,7 @@ function openEditModal(id) {
   document.getElementById("itemImageUrl").value = item.imageUrl || "";
   renderCategorySelects();
   document.getElementById("itemCategory").value = item.category || state.settings.categories[0];
+  renderStoreSelect(item.store || "");
   document.getElementById("itemCycle").value = item.cycleDays || "";
   document.getElementById("itemLastPurchased").value = item.lastPurchased || "";
   document.getElementById("itemMemo").value = item.memo || "";
@@ -1090,6 +1144,7 @@ async function handleItemFormSubmit(e) {
     imageUrl: safeImageUrl(document.getElementById("itemImageUrl").value),
     imageData: safeImageData(modalImageData),
     category: document.getElementById("itemCategory").value,
+    store: cleanStr(document.getElementById("itemStore").value, 50).trim(),
     cycleDays: Number(document.getElementById("itemCycle").value) || 30,
     lastPurchased,
     stockLevel: checkedStockLevel(),
@@ -1454,6 +1509,22 @@ function initSettingsUI() {
     showToast(copied ? "リンクをコピーしました" : "コピーできませんでした。リンクを長押しして選択・コピーしてください");
   });
 
+  const addStore = () => {
+    const input = document.getElementById("newStore");
+    const val = cleanStr(input.value, 50).trim();
+    if (!val) return;
+    const stores = state.settings.stores || [];
+    if (stores.length >= 50) { showToast("場所・店は50件まで登録できます"); return; }
+    if (!stores.includes(val)) {
+      state.settings.stores = [...stores, val];
+      saveSharedSettings();
+      render();
+    }
+    input.value = "";
+  };
+  document.getElementById("btnAddStore").addEventListener("click", addStore);
+  document.getElementById("newStore").addEventListener("keydown", (e) => { if (e.key === "Enter") addStore(); });
+
   document.getElementById("btnAddCategory").addEventListener("click", () => {
     const input = document.getElementById("newCategory");
     const val = input.value.trim();
@@ -1474,7 +1545,7 @@ function initSettingsUI() {
   });
 
   document.getElementById("btnExport").addEventListener("click", () => {
-    const data = { items: state.items, categories: state.settings.categories };
+    const data = { items: state.items, categories: state.settings.categories, stores: state.settings.stores };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

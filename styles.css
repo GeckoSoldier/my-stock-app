@@ -651,3 +651,11 @@ button.item-thumb-wrap {
 
 /* 狭い画面で「周期: 60日」や残量表示が途中で折り返さないように（入りきらないときは行ごと下へ） */
 .item-meta > span { white-space: nowrap; }
+
+/* 場所・店（カテゴリの下） */
+.item-store {
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: #5b4b8a;
+  word-break: break-word;
+}
