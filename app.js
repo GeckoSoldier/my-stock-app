@@ -33,7 +33,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.10.06-1";
+const APP_VERSION = "2026.10.06-2";
 
 const SETUP_PARAM = "setup=";
 
@@ -694,12 +694,17 @@ function itemThumbHtml(item) {
     </a>`;
 }
 
-// 「今買うもの」に出ていて、今日「買った」を押した商品（その日はグレーで残す）
+// 今日「買った」を押した商品（その日は「今買うもの」にグレーで残す）
+// ・「今買うもの」に出ていた状態で買ったもの
+// ・購入サイクルが短く（「まもなく」の日数以下）、買った直後でも「まもなく」に入ってしまうもの
+// ただし、買った後に残量を手で「少ない」「なし」にしたもの（まだ必要）は通常表示
 function isBoughtToday(item) {
   const today = todayStr();
-  if (item.checkedOn !== today || item.lastPurchased !== today) return false;
+  if (item.lastPurchased !== today) return false;
+  const info = stockInfo(item);
+  if (!info.auto && (info.level === "none" || info.level === "low")) return false;
   const { status } = computeStatus(item);
-  return status !== "due" && status !== "soon"; // 買った後でもまだ必要（残量を手で「なし」にした等）なら通常表示
+  return item.checkedOn === today || status === "due" || status === "soon";
 }
 
 function itemCardHtml(item, opts = {}) {
@@ -750,7 +755,7 @@ function render() {
   // TODAY list
   const todayItems = state.items
     .map((i) => ({ item: i, ...computeStatus(i) }))
-    .filter((x) => x.status === "due" || x.status === "soon")
+    .filter((x) => (x.status === "due" || x.status === "soon") && !isBoughtToday(x.item))
     .sort((a, b) => {
       const rank = { due: 0, soon: 1, ok: 2 };
       if (rank[a.status] !== rank[b.status]) return rank[a.status] - rank[b.status];
