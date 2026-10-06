@@ -1,16 +1,24 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 「共有コード(households/{code})」を知っている人だけがそのデータを読み書きできます。
+    // 「共有コード」を知っている人だけがそのデータを読み書きできます。
     // 匿名ログイン済みであることのみを条件にしたシンプルなルールです。
     // 共有コードは第三者に推測されにくい、ある程度長いランダムな文字列にしてください。
 
-    // 商品データ
-    match /households/{code}/items/{itemId} {
+    // ===== MEGURU（めぐる） =====
+    // TODOデータ
+    match /meguru/{code}/tasks/{taskId} {
+      allow read, write: if request.auth != null;
+    }
+    // カテゴリ・場所・「今やること」の判定日数などの共有設定
+    match /meguru/{code}/meta/{docId} {
       allow read, write: if request.auth != null;
     }
 
-    // カテゴリ・「まもなく」の日数などの共有設定
+    // ===== 日用品ストック管理（同じFirebaseプロジェクトを使う場合は残してください） =====
+    match /households/{code}/items/{itemId} {
+      allow read, write: if request.auth != null;
+    }
     match /households/{code}/meta/{docId} {
       allow read, write: if request.auth != null;
     }

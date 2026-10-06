@@ -33,7 +33,7 @@ const state = {
 };
 
 // アプリのバージョン（更新のたびに index.html の ?v= と合わせて変える）
-const APP_VERSION = "2026.10.02-2";
+const APP_VERSION = "2026.10.06-1";
 
 const SETUP_PARAM = "setup=";
 
@@ -146,6 +146,7 @@ function sanitizeItem(raw, keepId) {
     imageData: safeImageData(raw.imageData),
     memo: cleanStr(raw.memo, 500),
     history: Array.from(new Set((Array.isArray(raw.history) ? raw.history : []).map(cleanDate).filter(Boolean))).sort().slice(-10),
+    checkedOn: cleanDate(raw.checkedOn),   // 「今買うもの」に出ていた状態で「買った」を押した日
     createdAt: Number.isFinite(Number(raw.createdAt)) ? Number(raw.createdAt) : 0,
     updatedAt: Number.isFinite(Number(raw.updatedAt)) ? Number(raw.updatedAt) : 0
   };
@@ -693,15 +694,30 @@ function itemThumbHtml(item) {
     </a>`;
 }
 
-function itemCardHtml(item) {
+// 「今買うもの」に出ていて、今日「買った」を押した商品（その日はグレーで残す）
+function isBoughtToday(item) {
+  const today = todayStr();
+  if (item.checkedOn !== today || item.lastPurchased !== today) return false;
+  const { status } = computeStatus(item);
+  return status !== "due" && status !== "soon"; // 買った後でもまだ必要（残量を手で「なし」にした等）なら通常表示
+}
+
+function itemCardHtml(item, opts = {}) {
   const { daysLeft, status } = computeStatus(item);
+  const done = !!opts.doneToday;
   const info = stockInfo(item);
   let stockLabel;
   if (info.level === null) stockLabel = "不明";
   else if (info.auto) stockLabel = `${STOCK_LABELS[info.level]}（約${info.pct}%）`;
   else stockLabel = STOCK_LABELS[info.level];
   const stockClass = info.level || "";
-  const cardClass = status === "due" ? "overdue" : (status === "soon" ? "urgent" : "");
+  const cardClass = done ? "bought-today" : (status === "due" ? "overdue" : (status === "soon" ? "urgent" : ""));
+  const badge = done
+    ? `<span class="status-badge done">✓ 今日購入済み</span>`
+    : `<span class="status-badge ${status}">${statusLabel(status, daysLeft)}</span>`;
+  const boughtBtn = done
+    ? `<button class="btn btn-done" disabled aria-disabled="true">今日は購入済み</button>`
+    : `<button class="btn btn-primary" data-action="bought" data-id="${escapeHtml(item.id)}">買った（補充）</button>`;
 
   return `
   <div class="item-card ${cardClass}" data-id="${escapeHtml(item.id)}">
@@ -712,14 +728,14 @@ function itemCardHtml(item) {
         ${item.category ? `<span class="item-category">${escapeHtml(item.category)}</span>` : ""}
         ${item.store ? `<div class="item-store" title="買う場所・店">🏪 ${escapeHtml(item.store)}</div>` : ""}
       </div>
-      <span class="status-badge ${status}">${statusLabel(status, daysLeft)}</span>
+      ${badge}
     </div>
     <div class="item-meta">
       <span>前回: ${item.lastPurchased ? escapeHtml(item.lastPurchased) : "未記録"} ・ 周期: ${escapeHtml(item.cycleDays || "-")}日</span>
       <span class="stock-pill ${stockClass}">残量: ${stockLabel}</span>
     </div>
     <div class="item-actions">
-      <button class="btn btn-primary" data-action="bought" data-id="${escapeHtml(item.id)}">買った（補充）</button>
+      ${boughtBtn}
       <button class="btn btn-secondary" data-action="edit" data-id="${escapeHtml(item.id)}">編集</button>
     </div>
   </div>`;
@@ -741,10 +757,15 @@ function render() {
       return (a.daysLeft ?? 999) - (b.daysLeft ?? 999);
     });
 
+  const doneToday = state.items
+    .filter(isBoughtToday)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
+
   const todayList = document.getElementById("todayList");
   const todayEmpty = document.getElementById("todayEmpty");
-  todayList.innerHTML = todayItems.map((x) => itemCardHtml(x.item)).join("");
-  todayEmpty.hidden = todayItems.length > 0;
+  todayList.innerHTML = todayItems.map((x) => itemCardHtml(x.item)).join("") +
+    doneToday.map((i) => itemCardHtml(i, { doneToday: true })).join("");
+  todayEmpty.hidden = todayItems.length + doneToday.length > 0;
 
   // 「半分以下」リスト：残量が半分程度・少ない・なし（推定残量65%以下）の商品を、残りが少ない順に。
   // ただし「今買うもの」に出ている商品は重ならないよう除く
@@ -870,7 +891,10 @@ function attachCardHandlers() {
         history.push(item.lastPurchased);
       }
       history = history.sort().slice(-10);
-      const updated = { ...item, lastPurchased: today, stockLevel: "auto", stockV: 2, history, updatedAt: Date.now() };
+      const st = computeStatus(item).status;
+      const wasOnList = st === "due" || st === "soon";
+      const updated = { ...item, lastPurchased: today, stockLevel: "auto", stockV: 2, history,
+        checkedOn: wasOnList ? today : null, updatedAt: Date.now() };
       if (await upsertItem(updated)) showToast(`「${item.name}」を買った日を記録しました`);
     });
   });
@@ -1151,6 +1175,7 @@ async function handleItemFormSubmit(e) {
     stockV: 2,
     memo: document.getElementById("itemMemo").value.trim(),
     history: Array.from(new Set(modalHistory.filter((d) => d && d !== lastPurchased))).sort().slice(-10),
+    checkedOn: existing ? existing.checkedOn || null : null,
     createdAt: existing && existing.createdAt ? existing.createdAt : Date.now(),
     updatedAt: Date.now()
   };
@@ -1623,6 +1648,9 @@ function initGeneralUI() {
       if (t && t.classList && t.classList.contains("item-thumb-img")) t.style.display = "none";
     }, true);
   });
+
+  // アプリに戻ってきたとき（日付が変わった場合など）に表示を最新にする
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) render(); });
 
   document.getElementById("searchBox").addEventListener("input", render);
   document.getElementById("categoryFilter").addEventListener("change", render);

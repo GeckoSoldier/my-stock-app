@@ -659,3 +659,22 @@ button.item-thumb-wrap {
   color: #5b4b8a;
   word-break: break-word;
 }
+
+/* 今日購入済み（「今買うもの」タブでグレー表示） */
+.item-card.bought-today {
+  background: #eeeeec;
+  border-color: #d6d6d2;
+  box-shadow: none;
+}
+.item-card.bought-today .item-card-top,
+.item-card.bought-today .item-meta {
+  opacity: 0.6;
+  filter: grayscale(0.85);
+}
+.status-badge.done { background: #dcdcd8; color: #55574f; }
+.btn-done {
+  background: #dcdcd8;
+  color: #55574f;
+  cursor: default;
+}
+.btn-done:active { transform: none; }
